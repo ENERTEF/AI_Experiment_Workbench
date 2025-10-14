@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgadmin-servers
+
+data:
+  servers.json: |
+    {
+      "Servers": {
+        "1": {
+          "Name": "Postgres",
+          "Group": "Servers",
+          "Host": "db",
+          "Port": 5432,
+          "Username": "mlflow",
+          "SSLMode": "prefer",
+          "MaintenanceDB": "postgres"
+        }
+      }
+    }

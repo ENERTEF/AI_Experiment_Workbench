@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio
+          args: ["server", "/data"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_ROOT_PASSWORD
+            - name: MINIO_ADDRESS
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_ADDRESS
+            - name: MINIO_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_PORT
+            - name: MINIO_STORAGE_USE_HTTPS
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_STORAGE_USE_HTTPS
+            - name: MINIO_CONSOLE_ADDRESS
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_CONSOLE_ADDRESS
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          volumeMounts:
+            - name: minio-data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: minio-data
+          persistentVolumeClaim:
+            claimName: minio-data

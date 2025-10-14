@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      initContainers:
+        - name: init-postgres-dir
+          image: busybox
+          command:
+            - sh
+            - -c
+            - mkdir -p /var/lib/postgresql/data && chown 999:999 /var/lib/postgresql /var/lib/postgresql/data && chmod 755 /var/lib/postgresql && chmod 700 /var/lib/postgresql/data
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/postgresql
+      containers:
+        - name: db
+          image: postgres
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: POSTGRES_DATABASE
+            - name: PGDATA
+              value: /var/lib/postgresql/data
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/postgresql
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-p", "5432", "-U", "$(POSTGRES_USER)"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: db-data
+          persistentVolumeClaim:
+            claimName: db-data

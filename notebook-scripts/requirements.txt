@@ -1,0 +1,13 @@
+boto3
+mlflow
+psycopg2-binary
+ray[tune]
+optuna
+scikit-learn
+xgboost 
+pandas
+numpy
+matplotlib
+tensorflow==2.14.0
+tensorboard==2.14.0
+protobuf==3.20.3

@@ -1,0 +1,3 @@
+kubernetes/.portforward_pids
+minio_data/.minio.sys
+minio_data/mlflow
