@@ -46,7 +46,7 @@ S3-compatible object storage for datasets, model artifacts, and logs. Accessible
 
 ### Kubernetes
 Container orchestration platform managing all services, networking, and resource allocation. Uses k3d for local development environments.
-
+![Kubernetes](images/Kubernetes_Workflow.png)
 ## Directory Structure
 
 ### `/kubernetes/` - Infrastructure Configuration
