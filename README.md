@@ -136,7 +136,11 @@ This creates a k3d cluster, builds Docker images, and deploys all services.
 3. Access services via port forwarding:
 - JupyterHub: http://localhost:8080
 - MinIO Console: http://localhost:9001
+  username: minio_user
+  password: minio_pwd
 - pgAdmin: http://localhost:5050
+  username: admin@admin.com
+  password: admin
 
 4. Stop the environment:
 ```bash
