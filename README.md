@@ -334,3 +334,6 @@ The setup is suitable for both individual researchers and teams, with automatic 
 - [TensorBoard Documentation](https://www.tensorflow.org/tensorboard)
 - [MinIO Documentation](https://docs.min.io/community/minio-object-store/index.html)
 - [Kubernetes Documentation](https://kubernetes.io/docs/)
+
+## Questions
+If you have any questions, feel free to reach out to lara.roth@eonerc.rwth-aachen.de
