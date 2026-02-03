@@ -1,5 +1,35 @@
+<!-- TOC start (generated with https://github.com/derlin/bitdowntoc) -->
+
+- [EnerTEF JupyterHub ML Platform Documentation](#enertef-jupyterhub-ml-platform-documentation)
+   * [Overview](#overview)
+   * [Architecture](#architecture)
+      + [Data Flow](#data-flow)
+   * [Components](#components)
+   * [Directory Structure](#directory-structure)
+   * [Setup and Deployment](#setup-and-deployment)
+      + [Prerequisites](#prerequisites)
+      + [Custom Images (Built Locally)](#custom-images-built-locally)
+      + [Deployment Steps](#deployment-steps)
+   * [Usage Workflow](#usage-workflow)
+      + [Basic Workflow](#basic-workflow)
+      + [MLflow Experiment Tracking](#mlflow-experiment-tracking)
+      + [TensorBoard Visualization](#tensorboard-visualization)
+   * [Port Mappings](#port-mappings)
+   * [Advanced Features](#advanced-features)
+      + [MLflow User Isolation](#mlflow-user-isolation)
+      + [Integrated Extensions](#integrated-extensions)
+   * [Development and Customization](#development-and-customization)
+      + [Adding User Scripts](#adding-user-scripts)
+      + [Environment Modifications](#environment-modifications)
+   * [Summary](#summary)
+   * [Further Reading](#further-reading)
+
+<!-- TOC end -->
+
+<!-- TOC --><a name="enertef-jupyterhub-ml-platform-documentation"></a>
 # EnerTEF JupyterHub ML Platform Documentation
 
+<!-- TOC --><a name="overview"></a>
 ## Overview
 
 The EnerTEF JupyterHub ML Platform is a containerized machine learning environment built on Kubernetes. It provides isolated Jupyter notebook servers for each user, integrated with experiment tracking, visualization, and storage services.
@@ -13,10 +43,12 @@ The platform includes:
 
 A visual presentation can be found [here](docs/visualREADME.md).
 
+<!-- TOC --><a name="architecture"></a>
 ## Architecture
 
 ![Architecture](docs/images/architecture.png)
 
+<!-- TOC --><a name="data-flow"></a>
 ### Data Flow
 1. Users access JupyterHub via web interface
 2. Each user gets a dedicated Kubernetes pod with Jupyter notebook
@@ -24,14 +56,18 @@ A visual presentation can be found [here](docs/visualREADME.md).
 4. Data persists in MinIO and PostgreSQL
 5. All services communicate through Kubernetes networking
 
+<!-- TOC --><a name="components"></a>
 ## Components
 
+<!-- TOC --><a name="jupyterhub"></a>
 ### JupyterHub
 Multi-user platform that provisions isolated Jupyter notebook environments. Each user receives a dedicated container with pre-configured tools and libraries.
 
+<!-- TOC --><a name="tensorboard"></a>
 ### TensorBoard
 Visualization tool for machine learning experiments. Integrated directly into notebook environment for real-time monitoring of training metrics, loss curves, and model performance.
 
+<!-- TOC --><a name="mlflow"></a>
 ### MLflow
 Experiment tracking and model management platform. Provides:
 - Parameter and metric logging
@@ -39,30 +75,27 @@ Experiment tracking and model management platform. Provides:
 - Experiment comparison
 - User-based isolation (group isolation not implemented)
 
+<!-- TOC --><a name="minio"></a>
 ### MinIO
 S3-compatible object storage for datasets, model artifacts, and logs. Accessible from notebooks for data management and persistence.
 
+<!-- TOC --><a name="postgresql-pgadmin"></a>
 ### PostgreSQL & pgAdmin
 - PostgreSQL: Primary database for MLflow metadata and persistent data
 - pgAdmin: Web-based database administration interface
 
+<!-- TOC --><a name="kubernetes"></a>
 ### Kubernetes
 Container orchestration platform managing all services, networking, and resource allocation. Uses k3d for local development environments.
 
+<!-- TOC --><a name="directory-structure"></a>
 ## Directory Structure
 
-### `deploy/kubernetes/` - Infrastructure Configuration
-Contains Kubernetes manifests and deployment scripts:
-- `start.sh` / `stop.sh`: Environment startup and shutdown scripts
-- `db/`: PostgreSQL deployment, persistent volume claims, and secrets
-- `minio/`: MinIO storage service configuration
-- `mlflow-secret/`: MLflow authentication and network policies
-- `values/`: Helm chart values for JupyterHub, MinIO, and other services
-  - `jupyterhub.yaml`: JupyterHub Helm chart configuration
-  - `minio-tenant.yaml`: MinIO tenant configuration
-  - `pgadmin.yaml`: pgAdmin Helm chart configuration
+<!-- TOC --><a name="helmchart-infrastructure-configuration"></a>
+### `mlfw-workbench` - Helm Chart
+Contains Helm Chart template and values.
 
-
+<!-- TOC --><a name="srcnotebook-scripts-user-environment-templates"></a>
 ### `src/notebook-scripts/` - User Environment Templates
 Files automatically copied to new user home directories:
 - `requirements.txt`: Python dependencies for notebooks
@@ -70,21 +103,13 @@ Files automatically copied to new user home directories:
 - `mlflow_group_utils.py`: MLflow user management utilities
 - Example notebooks for common workflows
 
-### `src/jn-tb/` - Container Images
-Custom Docker images for the platform:
-- `Dockerfile`: Base Jupyter notebook image
-- `mlflow.Dockerfile`: MLflow server image
-- `start-notebook.sh`: Notebook initialization script
-- `mlflow-extension/`: Jupyter extensions for MLflow integration
-
+<!-- TOC --><a name="setup-and-deployment"></a>
 ## Setup and Deployment
 
+<!-- TOC --><a name="prerequisites"></a>
 ### Prerequisites
 
-- Docker
-  - Docker version 28.2.2 or later
-    For official installation instructions, visit:
-    https://docs.docker.com/engine/install/ubuntu/
+- Any cluster management software: k3s, k3d, kubernetes, kind...etc
 
 - Kubernetes tools:
   - kubectl v1.33.2 or later
@@ -96,16 +121,6 @@ Custom Docker images for the platform:
   sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
   ```
 
-  
-  - k3d v5.8.3 or later (with k3s v1.31.5-k3s1)
-  For official installation instuctions, visit:
-  https://k3d.io/stable/#releases
-  ```bash
-  # Install k3d
-  curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-  ```
-
-
 - Helm v3.18.3 or later
   For official installation instuctions, visit:
   https://helm.sh/docs/intro/install/
@@ -116,37 +131,45 @@ Custom Docker images for the platform:
   ./get_helm.sh
   ```
 
+You can use [this cluster starter](https://github.com/SystemsPurge/cluster-starter) for local setups.
+
+<!-- TOC --><a name="custom-images-built-locally"></a>
 ### Custom Images (Built Locally)
 
 - **jn-mlflow**: Built from `/jn-tb/mlflow.Dockerfile` using the start script - contains Jupyter Notebook with MLflow integration
+This image ends up being referenced for the user environment in the values.yaml
 
+<!-- TOC --><a name="deployment-steps"></a>
 ### Deployment Steps
 
 1. Clone repository and navigate to kubernetes directory:
 ```bash
 git clone <repository-url>
-cd enertef_hazem/kubernetes/
+cd AI_Experiment_Workbench
 ```
 
-2. Start the environment:
+2. Change top level ( anchored ) values in mlflow-workbench/values.yaml as needed.
+
+3. Install chart:
 ```bash
-./start.sh
+helm upgrade --install mlfw -f mlflow-workbench/values.yaml ./mlflow-workbench --namespace mlfw --create-namespace
 ```
+This installs the configured jupyter-hub instance, minio and postgres.
 
-This creates a k3d cluster, builds Docker images, and deploys all services.
-
-3. Access services via port forwarding:
-- JupyterHub: http://localhost:8080
-- MinIO Console: http://localhost:9001
-- pgAdmin: http://localhost:5050
-
-4. Stop the environment:
+4. Access services via port forwarding:
 ```bash
-./stop.sh
+kubectl port-forward service/<jhub-service-name> -n <deployment-namespace> <host-port>:8080
 ```
+This will expose jupyter-hub under localhost:8080
 
+Alternatively if you have a local dns setup, cloud-provider or loadbalancer, you can rely on
+gateways/ingress by passing the corresponding domain name to the values.
+
+
+<!-- TOC --><a name="usage-workflow"></a>
 ## Usage Workflow
 
+<!-- TOC --><a name="basic-workflow"></a>
 ### Basic Workflow
 
 1. Log into JupyterHub at http://localhost:8080
@@ -155,6 +178,7 @@ This creates a k3d cluster, builds Docker images, and deploys all services.
     - Username is case insensitive
 3. Access pre-installed libraries and scripts in the `/notebook-scripts/` directory
 
+<!-- TOC --><a name="mlflow-experiment-tracking"></a>
 ### MLflow Experiment Tracking
 
 ```python
@@ -170,6 +194,7 @@ with mlflow.start_run():
     mlflow.log_artifact("model.pkl")
 ```
 
+<!-- TOC --><a name="tensorboard-visualization"></a>
 ### TensorBoard Visualization
 
 ```python
@@ -178,6 +203,7 @@ from tensorboard_logger import TensorBoardLogger
 logger = TensorBoardLogger()
 # Use logger to track training metrics
 ```
+<!-- TOC --><a name="port-mappings"></a>
 ## Port Mappings
 
 The platform exposes several services on the following ports:
@@ -195,9 +221,8 @@ The platform exposes several services on the following ports:
 Additionally, ports 80 and 9090 have to be opened for Kubernetes services and internal routing to work. 
 This is done by the start script.
 
-Access these services by visiting `http://localhost:<PORT>` in your web browser.
-
-
+Access these services by visiting `http://localhost:<PORT>` in your web browser after using the `kubectl port-forward` command.
+Or under the pre-configured hostname when enabling ingress/gateways.
 
 
 **Note:** Not all services and ports are designed for web access. Some are exposed for API access, internal services, or diagnostics purposes only. These include:
@@ -208,123 +233,44 @@ Access these services by visiting `http://localhost:<PORT>` in your web browser.
 
 These ports are exposed to allow direct connections when needed for development, debugging, or custom integrations.
 
+<!-- TOC --><a name="advanced-features"></a>
 ## Advanced Features
 
+<!-- TOC --><a name="mlflow-user-isolation"></a>
 ### MLflow User Isolation
 - Each user has isolated experiment tracking
 - User-specific database schemas prevent data mixing
 - Group-based isolation not currently implemented
 
+<!-- TOC --><a name="integrated-extensions"></a>
 ### Integrated Extensions
 - MLflow and TensorBoard accessible directly from notebooks
 - Automatic startup with notebook environment
 - Seamless integration without additional configuration
 
-
-## Storage Usage
-
-Each user receives a dedicated PersistentVolumeClaim (PVC) for their notebook data, typically **10Gi** per user. Shared services (PostgreSQL, MinIO, pgAdmin, etc.) each have their own PVCs (usually 1Gi each).
-
-| PVC Name                   | Namespace      | Capacity | Purpose/Usage                                                                 |
-|----------------------------|---------------|----------|-------------------------------------------------------------------------------|
-| **claim-username**       | default       | 10Gi     | User notebook storage (home directory, notebooks, outputs, etc.)              |
-| **db-data**                | default       | 1Gi      | Persistent storage for the PostgreSQL database (MLflow metadata, etc.)        |
-| **hub-db-dir**             | default       | 1Gi      | JupyterHub’s own database (user/session state, authentication, etc.)          |
-| **pgadmin-pgadmin4**       | default       | 1Gi      | Persistent storage for pgAdmin (database admin UI settings, configs, etc.)    |
-| **data0-myminio-pool-0-0** | minio-tenant  | 1Gi      | Persistent storage for MinIO (S3-compatible object storage for artifacts/data) |
-
-### How to Modify Storage Sizes
-
-To change the amount of storage allocated to each component, edit the following files:
-
-#### User Notebooks (10Gi default)
-File: [`deploy/kubernetes/values/jupyterhub.yaml`](deploy/kubernetes/values/jupyterhub.yaml)
-```yaml
-singleuser:
-  storage:
-    capacity: 10Gi  # Change this value
-```
-
-#### JupyterHub Database (1Gi default)
-File: [`deploy/kubernetes/values/jupyterhub.yaml`](deploy/kubernetes/values/jupyterhub.yaml)
-```yaml
-hub:
-  db:
-    pvc:
-      storage: 1Gi  # Change this value
-```
-
-#### pgAdmin Storage (1Gi default)
-File: [`deploy/kubernetes/values/pgadmin.yaml`](deploy/kubernetes/values/pgadmin.yaml)
-```yaml
-persistentVolume:
-  size: 1Gi  # Change this value
-```
-
-#### PostgreSQL Database (1Gi default)
-File: [`deploy/kubernetes/db/db-pvc.yaml`](deploy/kubernetes/db/db-pvc.yaml)
-```yaml
-resources:
-  requests:
-    storage: 1Gi  # Change this value
-```
-
-#### MinIO Object Storage (1Gi default)
-File: [`deploy/kubernetes/minio/minio-pvc.yaml`](deploy/kubernetes/minio/minio-pvc.yaml)
-```yaml
-resources:
-  requests:
-    storage: 1Gi  # Change this value
-```
-
-
-## Troubleshooting
-
-### Service Access Issues
-- Verify port forwarding is active
-- Check pod status: `kubectl get pods`
-- Restart port forwarding if needed
-
-### Notebook Startup Problems
-- Check pod status: `kubectl get pods`
-- View pod logs: `kubectl logs <pod-name>`
-- Verify resource availability
-
-### MLflow Issues
-- Confirm PostgreSQL is running: `kubectl get pods`
-- Check MLflow server logs
-- Verify database connectivity
-
-### Useful Commands
-```bash
-# Check all pods
-kubectl get pods --all-namespaces
-
-# View pod logs
-kubectl logs <pod-name>
-
-# Check resource usage
-kubectl top pods
-```
-
+<!-- TOC --><a name="development-and-customization"></a>
 ## Development and Customization
 
+<!-- TOC --><a name="adding-user-scripts"></a>
 ### Adding User Scripts
 - Place scripts that should be pre-loaded in `src/notebook-scripts/`
 - Update `requirements.txt` for new dependencies
 - Scripts are automatically copied to user directories
 
+<!-- TOC --><a name="environment-modifications"></a>
 ### Environment Modifications
 - Modify Dockerfiles in `src/jn-tb/` for base images
 - Update Helm values in `deploy/kubernetes/values/`
 - Add services via Kubernetes manifests
 
+<!-- TOC --><a name="summary"></a>
 ## Summary
 
 This platform provides a complete ML development environment with user isolation, experiment tracking, and integrated tools. The containerized architecture ensures consistent environments while Kubernetes manages scaling and resource allocation.
 
 The setup is suitable for both individual researchers and teams, with automatic provisioning of isolated notebook environments and shared services for collaboration.
 
+<!-- TOC --><a name="further-reading"></a>
 ## Further Reading
 
 - [JupyterHub Documentation](https://jupyterhub.readthedocs.io/)
