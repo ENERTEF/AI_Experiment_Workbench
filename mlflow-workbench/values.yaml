@@ -1,0 +1,696 @@
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+replicaCount: 1
+
+shared_values:
+  minio_root_user: &MINIO_ROOT_USER "minio_user"
+  minio_root_password: &MINIO_ROOT_PASSWORD "minio_pwd"
+  minio_default_bucket: &MINIO_DEFAULT_BUCKET "mlflow"
+  minio_port: &MINIO_PORT 9000
+
+  postgres_user: &POSTGRES_USER "mlflow"
+  postgres_password: &POSTGRES_PASSWORD "mlflow"
+  postgres_db: &POSTGRES_DATABASE "mlflow"
+  postgres_port: &POSTGRES_PORT 5432
+
+  storage_class_name: &STORAGE_CLASS_NAME "local-path"
+
+  hub_admin_token: &HUB_ADMIN_TOKEN "cGFzcwo=" #"<put some base64 encoded string here>"
+
+auth:
+  client_id: &CLIENT_ID "jhub-mlfw"
+  client_secret: &CLIENT_SECRET "1OBIXjekR4qBUW3u3NY9xCpd4P39DCRz"
+  oauth_callback_url: &OAUTH_CALLBACK_URL https://jhub-mlfw.k3s.osc.eonerc.rwth-aachen.de/hub/oauth_callback
+  authorize_url: &AUTHORIZE_URL https://acss-keycloak.k8s.eonerc.rwth-aachen.de/realms/mlfw/protocol/openid-connect/auth
+  token_url: &TOKEN_URL https://acss-keycloak.k8s.eonerc.rwth-aachen.de/realms/mlfw/protocol/openid-connect/token
+  userdata_url: &USERDATA_URL https://acss-keycloak.k8s.eonerc.rwth-aachen.de/realms/mlfw/protocol/openid-connect/userinfo
+
+gateway:
+  enabled: true
+  hostname: jhub-mlfw.k3s.osc.eonerc.rwth-aachen.de
+  default_gateway:
+    name: eg
+    namespace: envoy-gateway-system
+    https_listener: https
+  expose_jhub: true
+  expose_minio_console: false
+  expose_postgres: false
+
+minio-obj-storage:
+  image:
+    registry: docker.io
+    repository: minio/minio
+    tag: "RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+    useCpuV1: false
+    tagCpuV1: "RELEASE.2025-09-07T16-13-09Z-cpuv1@sha256:13582eff79c6605a2d315bdd0e70164142ea7e98fc8411e9e10d089502a6d883"
+    imagePullPolicy: Always
+
+  auth:
+    rootUser: *MINIO_ROOT_USER
+    rootPassword: *MINIO_ROOT_PASSWORD
+
+  config:
+    browserEnabled: true
+
+  defaultBuckets: *MINIO_DEFAULT_BUCKET
+
+  postJob:
+    annotations:
+      helm.sh/hook: post-install,post-upgrade
+
+  podSecurityContext:
+    fsGroup: 1001
+
+  replicaCount: 1
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 1001
+    runAsGroup: 1001
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+  service:
+    type: ClusterIP
+    port: *MINIO_PORT
+    consolePort: 9090
+
+  persistence:
+    enabled: true
+    storageClass: *STORAGE_CLASS_NAME
+    annotations: {}
+    size: 8Gi
+    accessModes:
+      - ReadWriteOnce
+    existingClaim: ""
+    mountPath: /mnt/data
+
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+
+  startupProbe:
+    enabled: false
+
+pgsql-db:
+  initContainers: []
+  image:
+    registry: docker.io
+    repository: postgres
+    tag: "18.1@sha256:5ec39c188013123927f30a006987c6b0e20f3ef2b54b140dfa96dac6844d883f"
+    imagePullPolicy: Always
+
+  replicaCount: 1
+
+  podSecurityContext:
+    fsGroup: 999
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    readOnlyRootFilesystem: false
+    capabilities:
+      drop:
+        - ALL
+
+  auth:
+    username: *POSTGRES_USER
+    password: *POSTGRES_PASSWORD
+    database: *POSTGRES_DATABASE
+
+  config:
+    mountConfigMap: true
+
+  initdb:
+    directory: "/docker-entrypoint-initdb.d/"
+
+  service:
+    type: ClusterIP
+    port: *POSTGRES_PORT
+    targetPort: 5432
+
+  persistence:
+    enabled: true
+    storageClass: *STORAGE_CLASS_NAME
+    annotations: {}
+    size: 8Gi
+    accessModes:
+      - ReadWriteOnce
+    existingClaim: ""
+    subPath: ""
+    labels: {}
+
+  persistentVolumeClaimRetentionPolicy:
+    enabled: false
+
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  startupProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+    successThreshold: 1
+
+jhub_central:
+  hub:
+    revisionHistoryLimit:
+    config:
+      GenericOAuthenticator:
+        client_id: *CLIENT_ID
+        scope: 
+          - openid
+        tls_verify: false
+        client_secret: *CLIENT_SECRET
+        oauth_callback_url: *OAUTH_CALLBACK_URL
+        authorize_url: *AUTHORIZE_URL
+        token_url: *TOKEN_URL
+        userdata_url: *USERDATA_URL
+        login_service: keycloak
+        username_claim: preferred_username
+        userdata_params:
+          state: state
+        # Allow all Keycloak users
+        allow_all: true
+        admin_users:
+          - admin
+      JupyterHub:
+        admin_access: true
+        authenticator_class: generic-oauth
+    extraConfig:
+      01-user-groups-env: |
+        def pre_spawn_hook(spawner):
+            groups = ','.join(sorted([g.name for g in spawner.user.groups]))
+            spawner.environment['JUPYTERHUB_USER_GROUPS'] = groups      
+        c.KubeSpawner.pre_spawn_hook = pre_spawn_hook
+    service:
+      type: ClusterIP
+    baseUrl: /
+    concurrentSpawnLimit: 64
+    consecutiveFailureLimit: 5
+    deploymentStrategy:
+      type: Recreate
+    db:
+      type: sqlite-pvc
+      upgrade:
+      pvc:
+        accessModes:
+          - ReadWriteOnce
+        storage: 1Gi
+        storageClassName: *STORAGE_CLASS_NAME
+    extraEnv:
+      MLFLOW_SYNC_SERVICE_TOKEN:
+        value: *HUB_ADMIN_TOKEN
+    image:
+      name: quay.io/jupyterhub/k8s-hub
+      tag: "4.2.0"
+    podSecurityContext:
+      runAsNonRoot: true
+      fsGroup: 1000
+      seccompProfile:
+        type: "RuntimeDefault"
+    containerSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+    services:
+      mlflow-sync:
+        admin: true
+        apiToken:
+          value: *HUB_ADMIN_TOKEN
+    pdb:
+      enabled: false
+    networkPolicy:
+      enabled: true
+      egressAllowRules:
+        cloudMetadataServer: true
+        dnsPortsCloudMetadataServer: true
+        dnsPortsKubeSystemNamespace: true
+        dnsPortsPrivateIPs: true
+        nonPrivateIPs: true
+        privateIPs: true
+      interNamespaceAccessLabels: ignore
+    allowNamedServers: false
+
+    livenessProbe:
+      enabled: true
+      initialDelaySeconds: 300
+      periodSeconds: 10
+      failureThreshold: 60
+      timeoutSeconds: 3
+
+    readinessProbe:
+      enabled: true
+      initialDelaySeconds: 0
+      periodSeconds: 2
+      failureThreshold: 1000
+      timeoutSeconds: 1
+
+    serviceAccount:
+      create: true
+
+  rbac:
+    create: true
+
+  proxy:
+    https:
+      enabled: false
+    secretToken: '4d514a528099e35c7c7fd48acf9c9454ae41705412966f4a730d6c2f688cf948'
+    deploymentStrategy:
+      type: Recreate
+    service:
+      type: ClusterIP
+      #disableHttpPort: false
+    chp:
+      revisionHistoryLimit:
+      containerSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65534 # nobody user
+        runAsGroup: 65534 # nobody group
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: "RuntimeDefault"
+      image:
+        name: quay.io/jupyterhub/configurable-http-proxy
+        tag: "4.6.3"
+
+      livenessProbe:
+        enabled: true
+        initialDelaySeconds: 60
+        periodSeconds: 10
+        failureThreshold: 30
+        timeoutSeconds: 3
+
+      readinessProbe:
+        enabled: true
+        initialDelaySeconds: 0
+        periodSeconds: 2
+        failureThreshold: 1000
+        timeoutSeconds: 1
+      networkPolicy:
+        enabled: true
+        egressAllowRules:
+          cloudMetadataServer: true
+          dnsPortsCloudMetadataServer: true
+          dnsPortsKubeSystemNamespace: true
+          dnsPortsPrivateIPs: true
+          nonPrivateIPs: true
+          privateIPs: true
+        interNamespaceAccessLabels: ignore
+        allowedIngressPorts: [http, https]
+      pdb:
+        enabled: false
+    traefik:
+      revisionHistoryLimit:
+      containerSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65534 # nobody user
+        runAsGroup: 65534 # nobody group
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: "RuntimeDefault"
+      image:
+        name: traefik
+        tag: "v3.3.5"
+      hsts:
+        includeSubdomains: false
+        preload: false
+        maxAge: 15724800
+      networkPolicy:
+        enabled: true
+        egressAllowRules:
+          cloudMetadataServer: true
+          dnsPortsCloudMetadataServer: true
+          dnsPortsKubeSystemNamespace: true
+          dnsPortsPrivateIPs: true
+          nonPrivateIPs: true
+          privateIPs: true
+        interNamespaceAccessLabels: ignore
+        allowedIngressPorts: [http, https]
+      pdb:
+        enabled: false
+      serviceAccount:
+        create: true
+    secretSync:
+      containerSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65534 # nobody user
+        runAsGroup: 65534 # nobody group
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: "RuntimeDefault"
+      image:
+        name: quay.io/jupyterhub/k8s-secret-sync
+        tag: "4.2.0"
+
+  singleuser:
+    networkTools:
+      image:
+        name: quay.io/jupyterhub/k8s-network-tools
+        tag: "4.2.0"
+    cloudMetadata:
+      blockWithIptables: true
+      ip: 169.254.169.254
+    networkPolicy:
+      enabled: true
+      egressAllowRules:
+        cloudMetadataServer: false
+        dnsPortsCloudMetadataServer: true
+        dnsPortsKubeSystemNamespace: true
+        dnsPortsPrivateIPs: true
+        nonPrivateIPs: true
+        privateIPs: false
+      egress:
+        - to:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: minio-obj-storage
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: pgsql-db
+          ports:
+            - port: *MINIO_PORT
+              protocol: TCP
+            - port: *POSTGRES_PORT
+              protocol: TCP
+      interNamespaceAccessLabels: ignore
+    events: true
+    extraLabels:
+      hub.jupyter.org/network-access-hub: "true"
+    extraEnv: 
+      AWS_ACCESS_KEY_ID:
+        value: *MINIO_ROOT_USER
+      AWS_SECRET_ACCESS_KEY:
+        value: *MINIO_ROOT_PASSWORD
+      MLFLOW_S3_ENDPOINT_URL:
+        valueFrom:
+          configMapKeyRef:
+            name: services-configmap
+            key: minio_uri
+      MLFLOW_TRACKING_USERNAME:
+        value: "{username}"
+      MLFLOW_TRACKING_PASSWORD:
+        value: "{username}123"
+      MLFLOW_EXPERIMENT_NAME:
+        value: "{username}"
+      JUPYTERHUB_USER: 
+        value: "{username}"
+      MLFLOW_TRACKING_URI:
+        value: http://127.0.0.1:5000
+      MINIO_USER:
+        value: *MINIO_ROOT_USER
+      MINIO_PASSWORD:
+        value: *MINIO_ROOT_PASSWORD
+      MINIO_BUCKET:
+        value: *MINIO_DEFAULT_BUCKET
+      MINIO_PORT:
+        valueFrom:
+          configMapKeyRef:
+            name: services-configmap
+            key: minio_port_str
+      MINIO_HOST:
+        valueFrom:
+          configMapKeyRef:
+            name: services-configmap
+            key: minio_service_name
+      POSTGRES_USER:
+        value: *POSTGRES_USER
+      POSTGRES_PASSWORD:
+        value: *POSTGRES_PASSWORD
+      POSTGRES_DATABASE:
+        value: *POSTGRES_DATABASE
+      POSTGRES_PORT:
+        valueFrom:
+          configMapKeyRef:
+            name: services-configmap
+            key: postgres_port_str
+      POSTGRES_HOST:
+        valueFrom:
+          configMapKeyRef:
+            name: services-configmap
+            key: postgres_service_name
+      
+
+    initContainers:
+      - name: copy-defaults
+        image: alpine
+        command:
+          - sh
+          - -c
+          - |
+            echo "Copying default files to user home directory..."
+            # Create home directory if it doesn't exist
+            mkdir -p /home/jovyan
+            if [ "$(ls -A /default-files)" ]; then
+              cp -rfL /default-files/* /home/jovyan/ || echo "Warning: Some files might not have been copied"
+              chown -R 1000:100 /home/jovyan/
+              echo "Done copying files."
+            else
+              echo "No default files found to copy."
+            fi
+        volumeMounts:
+          - name: default-files
+            mountPath: /default-files
+            readOnly: true
+          - name: volume-{username}-{servername}
+            mountPath: /home/jovyan
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+
+    allowPrivilegeEscalation: false
+    uid: 1000
+    fsGid: 100
+    storage:
+      type: dynamic
+      extraVolumes:
+        - name: default-files
+          configMap:
+            name: default-files
+        - name: requirements
+          configMap:
+            name: requirements
+        - name: home
+          persistentVolumeClaim:
+            claimName: claim-{username}
+      extraVolumeMounts:
+        - name: default-files
+          mountPath: /default-files
+          readOnly: false
+        - name: requirements
+          mountPath: /requirements.txt
+          subPath: requirements.txt
+      static:
+        pvcName: claim-{username}
+        subPath: "{username}"
+      capacity: 10Gi
+      homeMountPath: /home/jovyan
+      dynamic:
+        storageClass: *STORAGE_CLASS_NAME
+        pvcNameTemplate: claim-{username}
+        volumeNameTemplate: volume-{user_server}
+        storageAccessModes: [ReadWriteOnce]
+    image:
+      name: soullessblob/jn-mlflow
+      tag: latest
+      pullPolicy: Always
+    startTimeout: 600
+    memory:
+      guarantee: 1G
+    cmd:
+      - /usr/local/bin/start-notebook.sh
+    defaultUrl: "/lab/tree/mlflow_tensorboard_examples.ipynb"
+
+  scheduling:
+    userScheduler:
+      enabled: true
+      revisionHistoryLimit:
+      replicas: 2
+      logLevel: 4
+      plugins:
+        score:
+          disabled:
+            - name: NodeResourcesBalancedAllocation
+            - name: NodeAffinity
+            - name: InterPodAffinity
+            - name: NodeResourcesFit
+            - name: ImageLocality
+          enabled:
+            - name: NodeAffinity
+              weight: 14631
+            - name: InterPodAffinity
+              weight: 1331
+            - name: NodeResourcesFit
+              weight: 121
+            - name: ImageLocality
+              weight: 11
+      pluginConfig:
+        - name: NodeResourcesFit
+          args:
+            scoringStrategy:
+              type: MostAllocated
+              resources:
+                - name: cpu
+                  weight: 1
+                - name: memory
+                  weight: 1
+      containerSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65534 # nobody user
+        runAsGroup: 65534 # nobody group
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: "RuntimeDefault"
+      image:
+        name: registry.k8s.io/kube-scheduler
+        tag: "v1.30.11"
+      pdb:
+        enabled: true
+        maxUnavailable: 1
+        minAvailable:
+      serviceAccount:
+        create: true
+    podPriority:
+      enabled: false
+    userPlaceholder:
+      enabled: true
+      image:
+        name: registry.k8s.io/pause
+        tag: "3.10"
+      replicas: 0
+      containerSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65534 # nobody user
+        runAsGroup: 65534 # nobody group
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: "RuntimeDefault"
+    corePods:
+      tolerations:
+        - key: hub.jupyter.org/dedicated
+          operator: Equal
+          value: core
+          effect: NoSchedule
+        - key: hub.jupyter.org_dedicated
+          operator: Equal
+          value: core
+          effect: NoSchedule
+      nodeAffinity:
+        matchNodePurpose: prefer
+    userPods:
+      tolerations:
+        - key: hub.jupyter.org/dedicated
+          operator: Equal
+          value: user
+          effect: NoSchedule
+        - key: hub.jupyter.org_dedicated
+          operator: Equal
+          value: user
+          effect: NoSchedule
+      nodeAffinity:
+        matchNodePurpose: prefer
+  prePuller:
+    containerSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 65534 # nobody user
+      runAsGroup: 65534 # nobody group
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+      seccompProfile:
+        type: "RuntimeDefault"
+    hook:
+      enabled: true
+      pullOnlyOnChanges: true
+      image:
+        name: quay.io/jupyterhub/k8s-image-awaiter
+        tag: "4.2.0"
+      containerSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65534 # nobody user
+        runAsGroup: 65534 # nobody group
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: "RuntimeDefault"
+      podSchedulingWaitDuration: 10
+      serviceAccount:
+        create: true
+      serviceAccountImagePuller:
+        create: true
+    continuous:
+      enabled: true
+      serviceAccount:
+        create: true
+    pullProfileListImages: true
+    pause:
+      containerSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65534 # nobody user
+        runAsGroup: 65534 # nobody group
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: "RuntimeDefault"
+      image:
+        name: registry.k8s.io/pause
+        tag: "3.10"
+        pullPolicy:
+        pullSecrets: []
+
+  cull:
+    enabled: true
+    users: false # --cull-users
+    adminUsers: true # --cull-admin-users
+    removeNamedServers: false # --remove-named-servers
+    timeout: 3600 # --timeout
+    every: 600 # --cull-every
+    concurrency: 10 # --concurrency
+    maxAge: 0 # --max-age

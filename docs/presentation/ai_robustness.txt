@@ -1,0 +1,61 @@
+Techniques that improve training:
+    Improve training data in order to improve model robustness against:
+        Adversarial attacks
+        Noise
+        Common perturbations
+    
+    Techniques used include:
+        Generating adversatial attacks (Data augmentation)
+            Transforming existing samples
+            Generating new samples
+            Transformations can be as simple as rotation or image background removal.
+            GAN (Generative Adversarial Network) -> Generate adversarial samples, perturbations, or boundary samples
+
+        Augmenting Data for Non-Adversarial Robustness
+            Addresses performance impairments caused by noise, non-adversarial perturbations, distribution shift
+            Techniques used include:
+                Human Involvement: Collecting human rationale -> Allows for new data generation, defining appropriate perturbation levels -> Improving model and ditributional shift robustness
+
+
+Improving robustness before / during training:
+    Fall under the categrory of designing in-model robustness strategies
+        Cornerstone technique for building robust models is Adversarial Training -> Complement natural data with perturbated data
+        Advancements in training procedures include:
+            Adversarial training enhancement: (Borrowing from ML paradigms like self-supervised and unsupervised learning?)
+            PGD Extensions: (Projected Gradient Descent), white box algorithm, Using wasserstein distance in the adversarial search space, encouraging similarities between logits from clean and adversarial examples
+            Dynamic Perturbations: Generating dynamic perturbations at the single data instance level
+
+        Beyong adversarial training:
+            Feature representation: Learning more robust feature representations through novel methods, adding methods to identify robust channels in CNNs
+            Regularization and Loss Functions: using adapted techniques such as PAC-Bayesian approach, regularizing the model's Jacobian. Loss can be tailored for robustness by incorporating objectives like triplet loss, mininmizing class distance, or mutual information
+
+            Knowledge Transfer: AKA Distillation, a knowledge tranfer technique where a smaller model mimics a larger one, can be used
+            
+            Architecture Design (In-Model Robustness): Modifying NNs to improve inherent robustness, this can include the following:
+                Tweaking layers: Introducing additive stochastic noise into the input layer of a CNN, adapting striding and pooling operations
+                SNNs: Spiking Neural Networks: (?) These exhibit inherent robustness to certain types of Adversarial Attacks without adverserial training
+                NAS: Neural Architecture Search -> Applied to discover robust architectures, sometimes inc. regularization of the smoothness of the loss landscape (??)
+
+How to change Datasets to improve robustness:
+    Improving robusntess comes from incorporating data that represents real-world variability or malicious samples (isn't this the same as adversarial training?). Methods include:
+        Transformation and Generation: Involves generating boundary samples using Boundary Conditional GANs (?) or using simple methods like image rotation or background removal
+        Mitigaiting Impairments: Custom or pre-existing approaches -> tackle impairments such as noise and non-adversarial perturbations
+        Incorporating Human Knowledge
+        Ad-hoc selection and adaptation: (?)
+
+Trained model with random dataset:
+    Not explicitly defined but the paper disucsses related concepts:
+        Robustness to noise and OOD (Out-of-Distribution (?)) data
+        Natural perturbations: Perofrmance maintainence under naturally-induced corruptions or alterations, conditions likely to occur in the real word compared to adversrial perturbations, include commonly witnessed natural noise (e.g. Gaussian noise in low lightning)
+        Certified Robustness Evaluation: evaluation against random input noise (48)
+        Noisy Training Data
+
+Training and Test Set Distributions
+    When the distribuation of the test set differs from the one of the training set
+    This is typically referred to using overlapping concepts:
+        Distribution Shift
+        Out-of-Distribution (OOD) Data
+            Correlation between In and OOD Accuracy
+            Impact of OOD Data
+
+    Trust contracts? 

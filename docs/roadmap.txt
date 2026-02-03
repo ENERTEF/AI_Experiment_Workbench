@@ -1,0 +1,121 @@
+roadmap:
+
+1. Install Kubernetes tools:
+    - kubectl: Command-line tool for interacting with Kubernetes clusters.
+    - k3d: Lightweight Kubernetes (k3s) in Docker containers. Initially used for cluster creation.
+    - minikube: Switched to minikube to try something new, but reverted to k3d due to minikube's higher resource usage.
+
+2. Kubernetes distributions and alternatives:
+    - k3d: Runs k3s (lightweight Kubernetes) in Docker. Fast, low resource usage, ideal for local development and CI.
+    - minikube: Runs a single-node Kubernetes cluster locally. Good for development, but heavier than k3d.
+    - kind: Runs official Kubernetes in Docker. Useful for testing real K8s behavior in containers.
+    - kubeadm: Tool for creating production-grade clusters on VMs or bare metal (more complex).
+    - Other platforms: Rancher, OpenShift, etc.
+
+3. Use cases:
+    - Local development/testing: minikube, kind, or k3d.
+    - Production/multi-node: Managed Kubernetes services (GKE, EKS, AKS) or self-managed clusters (kubeadm, Rancher, OpenShift).
+
+4. Summary:
+    - k3d = k3s (lightweight K8s) in Docker. Fast, minimal resource usage.
+    - kind = official Kubernetes in Docker. Closer to production K8s.
+    - minikube = single-node K8s for local dev. Heavier, but widely used.
+    - Use managed K8s or kubeadm for production.
+
+5. Next steps:
+    - Try k3d for local cluster setup.
+    - Use kompose to migrate Docker Compose files to Kubernetes manifests.
+    - Explore kubectl for cluster management.
+
+Installed Kompose to migrate from Docker Compose to Kubernetes deployments.
+
+Next, try Minikube for local Kubernetes clusters.
+
+Step 1: Use Kompose to convert Docker Compose files.
+
+Why use Deployments instead of Pods?
+- Deployments simplify pod management.
+- Enable scaling via ReplicaSets and support rollouts/rollbacks.
+- A Deployment creates a ReplicaSet, which manages the number of running pods.
+- The `replicas` field specifies how many pods should run.
+- Look into `kubectl rollout` for managing rollouts.
+
+Services:
+- Expose pods using Services.
+- Can specify tiers (e.g., frontend, backend) in `spec.selector.tier`.
+- The most common service type is LoadBalancer (there are 5 types in total).
+
+Storage:
+- Containers are ephemeral; files are lost when containers stop.
+- Use Volumes to persist data—directories accessible to containers.
+- PersistentVolumeClaims (PVCs) allow for persistent storage.
+
+Secrets and ConfigMaps:
+- Both expose key-value data to pods.
+- ConfigMaps are for plain text; Secrets are for sensitive data.
+- Both can be mapped into pods.
+
+Dashboard:
+- Deploy the Kubernetes dashboard directly from GitHub.
+
+kubectl tips:
+- Use an alias `k` for `kubectl` to save time.
+- View cluster config: `k config view`
+- View cluster info: `k cluster-info`
+- List namespaces: `k get namespaces`
+- Create or update resources: `k create` and `k apply`
+
+Examples:
+- Create a deployment: `kubectl create deployment my-app --image=nginx`
+    (A deployment creates a pod.) 
+- Expose a deployment as a service: `k expose deployment <name> --type=<type> --port=<port>`
+    (Creates a service to access containers inside nodes.)
+
+Resource constraints:
+- Set under `requests` (minimum resources) and `limits` (maximum allowed).
+- Controls how much CPU/memory a container can use.
+
+
+service to deployment selection is done using node selector names
+created local registry to host docker images 
+docker build -t localhost:5000/mlflow_server:latest ./docker-mlflow-server
+docker push localhost:5001/mlflow-server:latest
+
+Using s2i to build a docker image from a repositry and mount it to the hub, so that every new notebook has the same starting data
+push image to local registry and modify values to point to the new user image
+We can also achieve the same using pv/pvc, this allows to set welcome files and can assign files to specific users if needed
+
+
+installed metallb as a loadbalancing solution to get an external ip for the hub
+will install ingress to get a domain name
+
+
+
+Need to make the services to helm charts for easier installation
+
+helm install metallb metallb/metallb -n metallb-system --create-namespace
+
+to create a namespace
+
+
+metallb is needed anyways, since ingress uses loadbalancer , and based on that we can use ingress capabilites
+
+# Accessing Services in This Kubernetes Cluster
+
+## Why Port Forwarding?
+
+This project runs several services (like JupyterHub, MinIO, MLflow, and TensorBoard) inside a Kubernetes cluster on a remote virtual machine (VM).  
+While Kubernetes offers ways to expose these services directly (using LoadBalancer, NodePort, or Ingress), our current environment has some network restrictions:
+
+- The VM is only accessible via SSH.
+- Other network ports are blocked or not reachable from outside the VM.
+- We do not control the VM’s network setup.
+
+Because of these restrictions, the only reliable way to access the services from your own computer is by **port forwarding**.  
+Port forwarding works by creating a secure tunnel from your local machine to the service inside the cluster, using the SSH connection you already have.
+
+## How Port Forwarding Works
+
+- You run a script or command on the VM (like `kubectl port-forward ...`).
+- This command forwards a port from the service inside Kubernetes to your local machine.
+- You can then open your browser and access the service at `localhost:<port>` as if it were running on your own computer.

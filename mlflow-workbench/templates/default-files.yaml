@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: default-files
+  namespace: {{ .Release.Namespace }}
+binaryData: {}
+data:
+  {{ range $path, $_ :=  .Files.Glob "notebook/*.{py,ipynb}" }}
+    {{ base $path | nindent 2 }}: |-
+{{ $.Files.Get $path | nindent 4 }}
+  {{ end }}
