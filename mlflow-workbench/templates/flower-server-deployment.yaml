@@ -1,0 +1,54 @@
+{{- if and .Values.flower.enabled .Values.flower.as_hub }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flower-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: flower-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flower-server
+  template:
+    metadata:
+      labels:
+        app: flower-server
+    spec:
+      volumes:
+        - name: certs-vol
+          secret:
+            secretName: flower-server-tls
+      containers:
+        - name: superlink
+          image: flwr/superlink:latest
+          args: 
+            - "--isolation"
+            - "process"
+            - "--fleet-api-address"
+            - "0.0.0.0:9092"
+            - "--ssl-ca-certfile=/app/certs/ca.crt"
+            - "--ssl-keyfile=/app/certs/tls.key"
+          volumeMounts:
+            - name: certs-vol
+              mountPath: /app/certs
+              readOnly: true
+          ports:
+            - containerPort: 9092
+        - name: superexec
+          image: soullessblob/flower-server:latest
+          env:
+            - name: HUB_SYSTEM_MLFLOW_URI
+              value: "http://mlflow-svc:5000"
+            - name: HUB_SYSTEM_MLFLOW_USER
+              value: {{ .Values.mlflow.mlflow_admin_username | quote }}
+            - name: HUB_SYSTEM_MLFLOW_PASS
+              value: {{ .Values.mlflow.mlflow_admin_password | quote }}
+          args: 
+            - --insecure
+            - --plugin-type
+            - serverapp
+            - --appio-api-address
+            - 127.0.0.1:9091
+{{- end }}

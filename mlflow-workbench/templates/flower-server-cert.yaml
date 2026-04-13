@@ -1,0 +1,18 @@
+{{- if and .Values.flower.enabled .Values.flower.as_hub }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: flower-server-cert
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: flower-server-tls
+  issuerRef:
+    {{- .Values.flower.issuer_ref | toYaml | nindent 4 }}
+  commonName: flower-server-svc
+  dnsNames:
+    - flower-server-svc
+    - flower-server-svc
+    {{- if .Values.expose.enabled }}
+    - {{ .Values.expose.hostname }}
+    {{- end }}
+{{- end }}

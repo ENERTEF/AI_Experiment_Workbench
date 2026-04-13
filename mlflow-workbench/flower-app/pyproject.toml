@@ -1,0 +1,27 @@
+[project]
+name = "flower-test"
+version = "1.0.0"
+description = "Manual testing of Supernode/Superlink"
+dependencies = [
+    "flwr",
+    "mlflow"
+]
+
+[tool.flwr.app]
+publisher = "acs"
+
+[tool.flwr.app.components]
+serverapp = "server:app"
+clientapp = "client:app"
+
+[tool.flwr.app.config]
+run-remote = "false"
+user-mlflow-uri = "${MLFLOW_TRACKING_URI}"
+user-mlflow-username = "${MLFLOW_TRACKING_USERNAME}"
+user-mlflow-password = "${MLFLOW_TRACKING_PASSWORD}"
+
+[tool.flwr.federations]
+default = "k8s"
+[tool.flwr.federations.k8s]
+address = "flower-svc.flwr-tmp.svc.cluster.local:9092"
+insecure = true

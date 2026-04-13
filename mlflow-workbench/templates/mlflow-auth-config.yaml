@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mlflow-auth-config
+  namespace: {{ .Release.Namespace }}
+data:
+  auth.ini: |
+    [mlflow]
+    default_permission = NO_PERMISSIONS
+    admin_username = {{ .Values.mlflow.mlflow_admin_username }}
+    admin_password = {{ .Values.mlflow.mlflow_admin_password }}
+    authorization_function = mlflow.server.auth:authenticate_request_basic_auth
+    database_uri = {{ printf "postgresql://%s:%s@%s-pgsql-db:%d/%s" .Values.mlflow.postgres_user .Values.mlflow.postgres_password .Release.Name (int .Values.mlflow.postgres_port) .Values.mlflow.postgres_database }}

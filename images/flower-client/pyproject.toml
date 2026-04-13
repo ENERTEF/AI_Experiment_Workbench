@@ -1,0 +1,23 @@
+[project]
+name = "mlflow-federation-client"
+version = "1.0.0"
+description = "Flower + MLflow Client App"
+dependencies = [
+    "boto3",
+    "mlflow",
+    "psycopg2-binary",
+    "ray[tune]",
+    "optuna",
+    "scikit-learn",
+    "xgboost",
+    "pandas",
+    "numpy",
+    "matplotlib",
+    "tensorflow",
+    "tensorboard",
+    "jupyter-server-proxy",
+    "protobuf"
+]
+
+[tool.flwr.app]
+publisher = "acs"

@@ -1,0 +1,13 @@
+{{- if not .Values.auth.external.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-svc
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: keycloak
+  ports:
+  - port: 8080
+    targetPort: 8080
+{{- end }}

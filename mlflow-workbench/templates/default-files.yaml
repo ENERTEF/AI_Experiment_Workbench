@@ -5,7 +5,13 @@ metadata:
   namespace: {{ .Release.Namespace }}
 binaryData: {}
 data:
-  {{ range $path, $_ :=  .Files.Glob "notebook/*.{py,ipynb}" }}
+  {{ range $path, $_ :=  .Files.Glob "base-app/*.{py,ipynb}" }}
     {{ base $path | nindent 2 }}: |-
 {{ $.Files.Get $path | nindent 4 }}
   {{ end }}
+  {{- if .Values.flower.enable }}
+  {{ range $path, $_ :=  .Files.Glob "flower-app/*.{py,toml,ipynb}" }}
+    {{ base $path | nindent 2 }}: |-
+{{ $.Files.Get $path | nindent 4 }}
+  {{ end }}
+  {{- end }}

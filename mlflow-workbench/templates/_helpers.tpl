@@ -1,62 +1,70 @@
 {{/*
-Expand the name of the chart.
+Placu no Horderu
 */}}
-{{- define "mlflow-workbench.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
-{{- end }}
+{{- define "app.host" -}}
+{{- if .Values.expose.enabled -}}
+{{- printf "https://%s" .Values.expose.hostname -}}
+{{- else -}}
+{{- printf "https://localhost" -}}
+{{- end -}}
+{{- end -}}
 
-{{/*
-Create a default fully qualified app name.
-We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
-If release name contains chart name it will be used as a full name.
-*/}}
-{{- define "mlflow-workbench.fullname" -}}
-{{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- $name := default .Chart.Name .Values.nameOverride }}
-{{- if contains $name .Release.Name }}
-{{- .Release.Name | trunc 63 | trimSuffix "-" }}
-{{- else }}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
-{{- end }}
-{{- end }}
-{{- end }}
+{{- define "keycloak.groups_key" -}}
+{{- if .Values.auth.external.enabled -}}
+{{ .Values.auth.external.groups_key -}}
+{{- else -}}
+{{- "oauth_user.roles" -}}
+{{- end -}}
+{{- end -}}
 
-{{/*
-Create chart name and version as used by the chart label.
-*/}}
-{{- define "mlflow-workbench.chart" -}}
-{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
-{{- end }}
+{{- define "keycloak.allowed_groups" -}}
+{{- if .Values.auth.external.enabled -}}
+{{- .Values.auth.external.allowed_groups | toJson -}}
+{{- else -}}
+{{- (list "mlflow-user") | toJson -}}
+{{- end -}}
+{{- end -}}
 
-{{/*
-Common labels
-*/}}
-{{- define "mlflow-workbench.labels" -}}
-helm.sh/chart: {{ include "mlflow-workbench.chart" . }}
-{{ include "mlflow-workbench.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
+{{- define "keycloak.admin_groups" -}}
+{{- if .Values.auth.external.enabled -}}
+{{- .Values.auth.external.admin_groups | toJson -}}
+{{- else -}}
+{{- (list "mlflow-admin") | toJson -}}
+{{- end -}}
+{{- end -}}
 
-{{/*
-Selector labels
-*/}}
-{{- define "mlflow-workbench.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "mlflow-workbench.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
+{{- define "keycloak.realm_url" -}}
+{{- if .Values.auth.external.enabled -}}
+{{- .Values.auth.external.realm_url -}}
+{{- else -}}
+{{- printf "%s/auth/realms/mlflow-workbench" (include "app.host" .) -}}
+{{- end -}}
+{{- end -}}
 
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "mlflow-workbench.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "mlflow-workbench.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
-{{- end }}
+{{- define "keycloak.authorize_url" -}}
+{{- printf "%s/protocol/openid-connect/auth" (include "keycloak.realm_url" .) -}}
+{{- end -}}
+
+{{- define "keycloak.token_url" -}}
+{{- printf "%s/protocol/openid-connect/token" (include "keycloak.realm_url" .) -}}
+{{- end -}}
+
+{{- define "keycloak.userinfo_url" -}}
+{{- printf "%s/protocol/openid-connect/userinfo" (include "keycloak.realm_url" .) -}}
+{{- end -}}
+
+{{- define "flower.hub_superlink" -}}
+{{- if .Values.flower.as_hub -}}
+{{- printf "flower-server-svc:9092" -}}
+{{- else -}}
+{{- .Values.flower.hub_address -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "flower.tls_secret_name" -}}
+  {{- if .Values.flower.as_hub -}}
+    flower-server-tls
+  {{- else -}}
+    flower-client-tls
+  {{- end -}}
+{{- end -}}

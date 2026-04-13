@@ -1,0 +1,50 @@
+{{- if .Values.flower.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flower-client
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: flower-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flower-client
+  template:
+    metadata:
+      labels:
+        app: flower-client
+    spec:
+      volumes:
+        - name: certs-vol
+          secret:
+            secretName: {{ include "flower.tls_secret_name" }}
+            items:
+              - key: ca.crt
+                path: "ca.crt"
+      containers:
+        - name: supernode
+          image: flwr/supernode:latest
+          args: 
+            - "--isolation"
+            - "process"
+            - "--clientappio-api-address"
+            - "0.0.0.0:9094"
+            - "--superlink"
+            - {{ printf "%s" (include "flower.hub_superlink" .) | quote }}
+            - "--root-certificates"
+            - "/app/certs/ca.crt"
+          volumeMounts:
+            - name: certs-vol
+              mountPath: /app/certs
+              readOnly: true
+        - name: superexec
+          image: soullessblob/flower-client:latest
+          args: 
+            - --insecure
+            - --plugin-type
+            - clientapp
+            - --appio-api-address
+            - 127.0.0.1:9094
+{{- end }}

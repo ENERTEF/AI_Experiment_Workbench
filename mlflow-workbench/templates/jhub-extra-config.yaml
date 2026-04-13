@@ -1,0 +1,167 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jhub-extra-config
+  namespace: {{ .Release.Namespace }}
+data:
+  jupyter_server_config.py: |
+    import os
+    import json
+
+    c = get_config()
+
+    # Read the config we injected from the Hub
+    proxy_json = os.environ.get('PROXY_CONFIG_JSON')
+    if proxy_json:
+        c.ServerProxy.servers = json.loads(proxy_json)
+  auth_config.py: |
+    import os
+    from oauthenticator.generic import GenericOAuthenticator
+
+
+    #hard-coded
+    c.JupyterHub.authenticator_class = 'generic-oauth'
+    c.JupyterHub.admin_access = True
+    c.GenericOAuthenticator.manage_groups = True
+    c.GenericOAuthenticator.enable_auth_state = True
+    c.GenericOAuthenticator.login_service = "keycloak"
+    c.GenericOAuthenticator.username_claim = "preferred_username"
+    c.GenericOAuthenticator.scope = ["openid"]
+    c.GenericOAuthenticator.userdata_params = {"state":"state"}
+
+    
+    #tls verification check
+    {{ $insecure := .Values.auth.insecure_skip_verify | default false -}}
+    c.GenericOAuthenticator.validate_server_cert = {{ if $insecure }}False{{ else }}True{{ end }}
+
+    #templated
+    c.GenericOAuthenticator.auth_state_groups_key = {{ include "keycloak.groups_key" . | quote }}
+    c.GenericOAuthenticator.client_id = {{ .Values.auth.client_id | quote }}
+    c.GenericOAuthenticator.client_secret = {{ .Values.auth.client_secret | quote }}
+    c.GenericOAuthenticator.authorize_url = {{ include "keycloak.authorize_url" . | quote }}
+    c.GenericOAuthenticator.token_url = {{ include "keycloak.token_url" . | quote }}
+    c.GenericOAuthenticator.userdata_url = {{ include "keycloak.userinfo_url" . | quote }}
+    c.GenericOAuthenticator.oauth_callback_url = {{- printf "%s/hub/oauth_callback" (include "app.host" .) | quote }}
+    c.GenericOAuthenticator.allowed_groups = {{ include "keycloak.allowed_groups" . }}
+    c.GenericOAuthenticator.admin_groups = {{ include "keycloak.admin_groups" . }}
+  extra_config.py: |
+    import requests
+    import base64
+    import secrets
+    import json 
+
+    MLFLOW_ADMIN = "{{ .Values.mlflow.mlflow_admin_username }}"
+    MLFLOW_PASS = "{{ .Values.mlflow.mlflow_admin_password }}"
+    GROUPS_KEY = {{ include "keycloak.groups_key" . | quote }}
+    ADMIN_GROUPS = {{ include "keycloak.admin_groups" . }}
+    MLFLOW_SVC = "http://mlflow-svc:5000"
+    
+    def auth_state_hook(spawner, auth_state):
+        oauth_user = auth_state.get('oauth_user', {})
+        username = oauth_user.get('preferred_username')
+        password = secrets.token_hex(16)
+        try:
+            #increase timeout (x2)
+            spawner.http_timeout = 60 
+            spawner.start_timeout = 60
+
+            user_roles=auth_state
+            #traverse auth_state for groups field
+            for part in GROUPS_KEY.split('.'):
+                user_roles = user_roles.get(part, {})
+
+            #check admin
+            is_admin = any(role in ADMIN_GROUPS for role in user_roles)
+
+            #prep admin auth header
+            auth_header = base64.b64encode(f"{MLFLOW_ADMIN}:{MLFLOW_PASS}".encode()).decode()
+            headers = {"Authorization": f"Basic {auth_header}"}
+
+            #check if user exists
+            res = requests.get(f"{MLFLOW_SVC}/api/2.0/mlflow/users/get", params={"username": username}, headers=headers, timeout=5)
+            
+            if res.status_code == 200:
+                spawner.log.info(f"MLflow: Updating session password for existing user {username}")
+                #change pass
+                requests.patch(
+                    f"{MLFLOW_SVC}/api/2.0/mlflow/users/update-password",
+                    json={"username": username, "password": password},
+                    headers=headers,
+                    timeout=5
+                )
+            else:
+                spawner.log.info(f"MLflow: Provisioning new user {username}")
+                #create user
+                requests.post(
+                    f"{MLFLOW_SVC}/api/2.0/mlflow/users/create",
+                    json={"username": username, "password": password},
+                    headers=headers,
+                    timeout=5
+                )
+
+                #set admin
+                requests.patch(
+                    f"{MLFLOW_SVC}/api/2.0/mlflow/users/update-admin",
+                    json={"username": username, "is_admin": is_admin},
+                    headers=headers, timeout=5
+                )
+
+            #conditional workspace isolation
+            if not is_admin:
+                workspace_name = f"ws-{username}"
+            
+                requests.post(f"{MLFLOW_SVC}/api/3.0/mlflow/workspaces", 
+                            json={"name": workspace_name}, headers=headers, timeout=5)
+
+                requests.post(f"{MLFLOW_SVC}/api/3.0/mlflow/workspaces/{workspace_name}/permissions",
+                            json={"username": username, "permission": "MANAGE"}, headers=headers, timeout=5)
+
+                spawner.environment['MLFLOW_WORKSPACE'] = workspace_name
+
+            #set auth env
+            spawner.environment['MLFLOW_TRACKING_USERNAME'] = username
+            spawner.environment['MLFLOW_TRACKING_PASSWORD'] = password
+            spawner.environment['MLFLOW_TRACKING_URI'] = MLFLOW_SVC
+
+            #Use environment to create launcher entries
+            auth_str = f"{username}:{password}"
+            encoded_auth = base64.b64encode(auth_str.encode()).decode()
+            spawner.environment['PROXY_CONFIG_JSON'] = json.dumps({
+                "mlflow": {
+                    "command": [
+                        "socat", 
+                        "TCP-LISTEN:{port},fork", 
+                        "TCP:mlflow-svc:5000"
+                    ],
+                    "absolute_url": False,
+                    "request_headers_override": {
+                        "Authorization": f"Basic {encoded_auth}",
+                        "Host":"mlflow-svc:5000",
+                        "Origin": MLFLOW_SVC
+                    },
+                    "launcher_entry": {
+                        "title": "MLflow UI",
+                    }
+                },
+                "tensorboard": {
+                    "command": [
+                        "tensorboard",
+                        "--logdir", "/home/jovyan/logs",
+                        "--port", "{port}",
+                        "--bind_all"
+                    ],
+                    "timeout": 20,
+                    "launcher_entry": {
+                        "title": "TensorBoard"
+                    }
+                }
+            }).replace("{", "{"+"{").replace("}", "}"+"}")
+
+            # ^The braces addition is required due to a combination of how kubespawner
+            #And helm behave
+
+        except Exception as e:
+            spawner.log.error(f"MLflow Session Provisioning Failed for {username}: {e}")
+
+    #set the auth hook
+    c.Spawner.auth_state_hook = auth_state_hook

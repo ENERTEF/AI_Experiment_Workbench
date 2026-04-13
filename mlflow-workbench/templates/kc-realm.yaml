@@ -1,0 +1,71 @@
+{{- if not .Values.auth.external.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm-import
+  namespace: {{ .Release.Namespace }}
+data:
+  mlflow-workbench-realm.json: |
+    {
+      "realm": "mlflow-workbench",
+      "enabled": true,
+      "roles": {
+        "client": {
+          {{ .Values.auth.client_id | quote }}: [
+            { "name": "mlflow-admin" },
+            { "name": "mlflow-user" }
+          ]
+        }
+      },
+      "users": [
+        {
+          "username": "admin-user",
+          "emailVerified": true,
+          "email":"admin-user@mail.de",
+          "enabled": true,
+          "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+          "clientRoles": {
+            {{ .Values.auth.client_id | quote }}: ["mlflow-admin"]
+          }
+        },
+        {
+          "username": "standard-user",
+          "emailVerified": true,
+          "email":"standard-user@mail.de",
+          "enabled": true,
+          "credentials": [{ "type": "password", "value": "user123", "temporary": false }],
+          "clientRoles": {
+            {{ .Values.auth.client_id | quote }}: ["mlflow-user"]
+          }
+        }
+      ],
+      "clients": [
+        {
+          "clientId": {{ .Values.auth.client_id | quote }},
+          "enabled": true,
+          "protocol": "openid-connect",
+          "publicClient": false,
+          "secret": {{ .Values.auth.client_secret | quote }},
+          "redirectUris": [ {{ printf "%s/*" (include "app.host" .) | quote }} ],
+          "defaultClientScopes": [ "oidc", "roles", "profile", "email" ],
+          "protocolMappers": [
+            {
+              "name": "client roles mapper",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-client-role-mapper",
+              "config": {
+                "multivalued": "true",
+                "userinfo.token.claim": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "claim.name": "roles",
+                "usages.realm.role.mapping": "false",
+                "usages.client.role.mapping": "true",
+                "client.id": {{ .Values.auth.client_id | quote }}
+              }
+            }
+          ]
+        }
+      ]
+    }
+{{- end }}

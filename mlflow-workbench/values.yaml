@@ -3,77 +3,94 @@ nameOverride: ""
 fullnameOverride: ""
 replicaCount: 1
 
+#Shared values are anchored, it is advised to only change these values
+#And NOT OVERRIDE where they are referenced
 shared_values:
+  #Admin minio account, used by mlflow tracking server
   minio_root_user: &MINIO_ROOT_USER "minio_user"
   minio_root_password: &MINIO_ROOT_PASSWORD "minio_pwd"
   minio_default_bucket: &MINIO_DEFAULT_BUCKET "mlflow"
   minio_port: &MINIO_PORT 9000
-
+  #Admin postgres account, used by mlflow tracking server
   postgres_user: &POSTGRES_USER "mlflow"
   postgres_password: &POSTGRES_PASSWORD "mlflow"
   postgres_db: &POSTGRES_DATABASE "mlflow"
   postgres_port: &POSTGRES_PORT 5432
-
+  #Kubernetes persistentVolume classname (e.g rook-ceph-block)
+  #Defaults to local-path, requiring cluster admin privileges
   storage_class_name: &STORAGE_CLASS_NAME "local-path"
-
   hub_admin_token: &HUB_ADMIN_TOKEN "cGFzcwo=" #"<put some base64 encoded string here>"
 
+#Jupyterhub is configured to use an auth_state_hook
+#In order to create an mlflow account for any user
+#Redirected from the specified keycloak (external or managed by this chart)
+#It also takes into account group permissions
+#Each standard user gets their own mlflow workspace
+#Admins have access to all workspaces in the mlflow tracking server
 auth:
-  client_id: &CLIENT_ID "jhub-mlfw"
-  client_secret: &CLIENT_SECRET "1OBIXjekR4qBUW3u3NY9xCpd4P39DCRz"
-  oauth_callback_url: &OAUTH_CALLBACK_URL https://jhub-mlfw.k3s.osc.eonerc.rwth-aachen.de/hub/oauth_callback
-  authorize_url: &AUTHORIZE_URL https://acss-keycloak.k8s.eonerc.rwth-aachen.de/realms/mlfw/protocol/openid-connect/auth
-  token_url: &TOKEN_URL https://acss-keycloak.k8s.eonerc.rwth-aachen.de/realms/mlfw/protocol/openid-connect/token
-  userdata_url: &USERDATA_URL https://acss-keycloak.k8s.eonerc.rwth-aachen.de/realms/mlfw/protocol/openid-connect/userinfo
+  #These values have different meanings, depending on whether keycloak is external
+  #If keycloak is managed by this chart, then these values will be used to generate
+  #The client for this app. If keycloak is external, then it is assumed that the client
+  #For this app is configured with these values
+  client_id: "jhub-mlfw"
+  client_secret: "f7S7nref4Tpe5kQA7ReTmSvutjya0fKu"
+  #Keycloak bootstrapping credentials for generating a master realm + admin user
+  kc_admin: "admin"
+  kc_admin_pass: "admin"
+  #In some cluster setups, the certs may NOT be selfsigned, but still not recognized
+  #By the hub anyway, this field deactivates tls verification between the hub and Keycloak
+  #Temporary, Until further considerations can be made to instruct the hub to recognize
+  #Certain certs, maybe passed by CM name and namespace
+  insecure_skip_verify: true
+  external:
+    enabled: false
+    realm_url: "https://tef-dso-keycloak.k8s.eonerc.rwth-aachen.de/realms/tef-dso"
+    #The groups claim, changing this may require re-configuring the keycloak
+    #Client scope to account for the nesting of claims
+    groups_key: "oauth_user.roles"
+    #Standard user groups
+    allowed_groups:
+      - mlfw-user
+    #Admin user groups
+    admin_groups:
+      - mlfw-admin
 
-gateway:
+#Exposing may be achieved using one of two kubernetes API's
+#Ingress or Gateways. This is due to the current transition to the Gateways API
+#In all implementations that used to support ingress
+expose:
   enabled: true
-  hostname: jhub-mlfw.k3s.osc.eonerc.rwth-aachen.de
-  default_gateway:
-    name: eg
-    namespace: envoy-gateway-system
-    https_listener: https
-  expose_jhub: true
-  expose_minio_console: false
-  expose_postgres: false
+  gateway:
+    #A gateway with a proper https listener is assumed to exist
+    #Any exposition will fail silently if it doesnt in the case where type=gateway
+    default_gateway:
+      name: eg
+      namespace: envoy-gateway-system
+      #The listener reference, this is used to create the HTTPRoute resource
+      https_listener: https
+  ingress:
+    className: nginx
+  #One of ingress or gateway
+  type: "ingress"
+  #Use these annotations to reference your certificate issuer
+  #It is advised to always have a cert setup, even in a dev cluster, since everything
+  #Is configured over https
+  #The jhub instance will conditionally disable tls verification, if expose.enabled=false
+  annotations: {
+    cert-manager.io/issuer: step-issuer,
+    cert-manager.io/issuer-kind: "StepClusterIssuer",
+    cert-manager.io/issuer-group: "certmanager.step.sm"
+  }
+  #tls/ingress hostname
+  hostname: "jhub-mlfw.k3s.osc.eonerc.rwth-aachen.de"
 
+#A copy of the values of the cloudpirates minio subchart
 minio-obj-storage:
-  image:
-    registry: docker.io
-    repository: minio/minio
-    tag: "RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
-    useCpuV1: false
-    tagCpuV1: "RELEASE.2025-09-07T16-13-09Z-cpuv1@sha256:13582eff79c6605a2d315bdd0e70164142ea7e98fc8411e9e10d089502a6d883"
-    imagePullPolicy: Always
-
+  replicaCount: 1
   auth:
     rootUser: *MINIO_ROOT_USER
     rootPassword: *MINIO_ROOT_PASSWORD
-
-  config:
-    browserEnabled: true
-
   defaultBuckets: *MINIO_DEFAULT_BUCKET
-
-  postJob:
-    annotations:
-      helm.sh/hook: post-install,post-upgrade
-
-  podSecurityContext:
-    fsGroup: 1001
-
-  replicaCount: 1
-
-  containerSecurityContext:
-    allowPrivilegeEscalation: false
-    runAsNonRoot: true
-    runAsUser: 1001
-    runAsGroup: 1001
-    readOnlyRootFilesystem: true
-    capabilities:
-      drop:
-        - ALL
-
   service:
     type: ClusterIP
     port: *MINIO_PORT
@@ -89,58 +106,13 @@ minio-obj-storage:
     existingClaim: ""
     mountPath: /mnt/data
 
-  livenessProbe:
-    enabled: true
-    initialDelaySeconds: 30
-    periodSeconds: 10
-    timeoutSeconds: 5
-    failureThreshold: 3
-    successThreshold: 1
-
-  readinessProbe:
-    enabled: true
-    initialDelaySeconds: 5
-    periodSeconds: 5
-    timeoutSeconds: 3
-    failureThreshold: 3
-    successThreshold: 1
-
-  startupProbe:
-    enabled: false
-
+#A copy of the values of the cloudpirates postgres subchart
 pgsql-db:
-  initContainers: []
-  image:
-    registry: docker.io
-    repository: postgres
-    tag: "18.1@sha256:5ec39c188013123927f30a006987c6b0e20f3ef2b54b140dfa96dac6844d883f"
-    imagePullPolicy: Always
-
   replicaCount: 1
-
-  podSecurityContext:
-    fsGroup: 999
-
-  containerSecurityContext:
-    allowPrivilegeEscalation: false
-    runAsNonRoot: true
-    runAsUser: 999
-    runAsGroup: 999
-    readOnlyRootFilesystem: false
-    capabilities:
-      drop:
-        - ALL
-
   auth:
     username: *POSTGRES_USER
     password: *POSTGRES_PASSWORD
     database: *POSTGRES_DATABASE
-
-  config:
-    mountConfigMap: true
-
-  initdb:
-    directory: "/docker-entrypoint-initdb.d/"
 
   service:
     type: ClusterIP
@@ -158,323 +130,95 @@ pgsql-db:
     subPath: ""
     labels: {}
 
-  persistentVolumeClaimRetentionPolicy:
-    enabled: false
+#MLflow pretty much simply manages the different contexts
+#In which different users are working, see the auth block comments for more
+mlflow:
+  minio_user: *MINIO_ROOT_USER
+  minio_password: *MINIO_ROOT_PASSWORD
+  minio_bucket: *MINIO_DEFAULT_BUCKET
+  minio_port: *MINIO_PORT
 
-  livenessProbe:
-    enabled: true
-    initialDelaySeconds: 30
-    periodSeconds: 10
-    timeoutSeconds: 5
-    failureThreshold: 3
-    successThreshold: 1
+  postgres_user: *POSTGRES_USER
+  postgres_password: *POSTGRES_PASSWORD
+  postgres_database: *POSTGRES_DATABASE
+  postgres_port: *POSTGRES_PORT
 
-  readinessProbe:
-    enabled: true
-    initialDelaySeconds: 5
-    periodSeconds: 5
-    timeoutSeconds: 5
-    failureThreshold: 3
-    successThreshold: 1
+  mlflow_admin_username: "admin"
+  mlflow_admin_password: "admin420noscope"
 
-  startupProbe:
-    enabled: true
-    initialDelaySeconds: 30
-    periodSeconds: 10
-    timeoutSeconds: 5
-    failureThreshold: 30
-    successThreshold: 1
-
+#Federated learning configuration and remote task scheduling
+#Mainly to specify who is hub and who is client
+#TODO: Support remote (possibly Ray tune) or deployed cluster for task scheduling
+flower:
+  enabled: false
+  hub_address: "flower-svc.flwr-tmp.svc.cluster.local:9092"
+  as_hub: false
+  issuer_ref:
+    name: step-issuer,
+    kind: "StepClusterIssuer",
+    group: "certmanager.step.sm"
+#A copy of the values of the Z2JH subchart
+#The primary function of the hub in this app is to handle redirects from the IDP
+#To create an mlflow account depending on group, create the notebook and activate 
+#The mlflow UI and tensorboard extensions
 jhub_central:
   hub:
-    revisionHistoryLimit:
-    config:
-      GenericOAuthenticator:
-        client_id: *CLIENT_ID
-        scope: 
-          - openid
-        tls_verify: false
-        client_secret: *CLIENT_SECRET
-        oauth_callback_url: *OAUTH_CALLBACK_URL
-        authorize_url: *AUTHORIZE_URL
-        token_url: *TOKEN_URL
-        userdata_url: *USERDATA_URL
-        login_service: keycloak
-        username_claim: preferred_username
-        userdata_params:
-          state: state
-        # Allow all Keycloak users
-        allow_all: true
-        admin_users:
-          - admin
-      JupyterHub:
-        admin_access: true
-        authenticator_class: generic-oauth
-    extraConfig:
-      01-user-groups-env: |
-        def pre_spawn_hook(spawner):
-            groups = ','.join(sorted([g.name for g in spawner.user.groups]))
-            spawner.environment['JUPYTERHUB_USER_GROUPS'] = groups      
-        c.KubeSpawner.pre_spawn_hook = pre_spawn_hook
-    service:
-      type: ClusterIP
-    baseUrl: /
-    concurrentSpawnLimit: 64
-    consecutiveFailureLimit: 5
-    deploymentStrategy:
-      type: Recreate
+    #These are the jupyterhub config templates
+    extraVolumes:
+      - name: jhub-extra-config
+        configMap:
+          name: jhub-extra-config
+    extraVolumeMounts:
+      #This template is used to add the previously mentioned auth hooks
+      - name: jhub-extra-config
+        mountPath: /usr/local/etc/jupyterhub/jupyterhub_config.d/extra_config.py
+        subPath: extra_config.py
+        readOnly: true
+      #This template is used to configure the GenericOAuthenticator dynamically from the
+      #Values
+      - name: jhub-extra-config
+        mountPath: /usr/local/etc/jupyterhub/jupyterhub_config.d/auth_config.py
+        subPath: auth_config.py
+        readOnly: true
     db:
       type: sqlite-pvc
-      upgrade:
       pvc:
+        storageClassName: *STORAGE_CLASS_NAME
         accessModes:
           - ReadWriteOnce
-        storage: 1Gi
-        storageClassName: *STORAGE_CLASS_NAME
-    extraEnv:
-      MLFLOW_SYNC_SERVICE_TOKEN:
-        value: *HUB_ADMIN_TOKEN
     image:
       name: quay.io/jupyterhub/k8s-hub
       tag: "4.2.0"
-    podSecurityContext:
-      runAsNonRoot: true
-      fsGroup: 1000
-      seccompProfile:
-        type: "RuntimeDefault"
-    containerSecurityContext:
-      runAsUser: 1000
-      runAsGroup: 1000
-      allowPrivilegeEscalation: false
-      capabilities:
-        drop: ["ALL"]
-    services:
-      mlflow-sync:
-        admin: true
-        apiToken:
-          value: *HUB_ADMIN_TOKEN
-    pdb:
-      enabled: false
-    networkPolicy:
-      enabled: true
-      egressAllowRules:
-        cloudMetadataServer: true
-        dnsPortsCloudMetadataServer: true
-        dnsPortsKubeSystemNamespace: true
-        dnsPortsPrivateIPs: true
-        nonPrivateIPs: true
-        privateIPs: true
-      interNamespaceAccessLabels: ignore
-    allowNamedServers: false
-
-    livenessProbe:
-      enabled: true
-      initialDelaySeconds: 300
-      periodSeconds: 10
-      failureThreshold: 60
-      timeoutSeconds: 3
-
-    readinessProbe:
-      enabled: true
-      initialDelaySeconds: 0
-      periodSeconds: 2
-      failureThreshold: 1000
-      timeoutSeconds: 1
-
-    serviceAccount:
-      create: true
-
-  rbac:
-    create: true
-
   proxy:
-    https:
-      enabled: false
     secretToken: '4d514a528099e35c7c7fd48acf9c9454ae41705412966f4a730d6c2f688cf948'
-    deploymentStrategy:
-      type: Recreate
-    service:
-      type: ClusterIP
-      #disableHttpPort: false
-    chp:
-      revisionHistoryLimit:
-      containerSecurityContext:
-        runAsNonRoot: true
-        runAsUser: 65534 # nobody user
-        runAsGroup: 65534 # nobody group
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: "RuntimeDefault"
-      image:
-        name: quay.io/jupyterhub/configurable-http-proxy
-        tag: "4.6.3"
-
-      livenessProbe:
-        enabled: true
-        initialDelaySeconds: 60
-        periodSeconds: 10
-        failureThreshold: 30
-        timeoutSeconds: 3
-
-      readinessProbe:
-        enabled: true
-        initialDelaySeconds: 0
-        periodSeconds: 2
-        failureThreshold: 1000
-        timeoutSeconds: 1
-      networkPolicy:
-        enabled: true
-        egressAllowRules:
-          cloudMetadataServer: true
-          dnsPortsCloudMetadataServer: true
-          dnsPortsKubeSystemNamespace: true
-          dnsPortsPrivateIPs: true
-          nonPrivateIPs: true
-          privateIPs: true
-        interNamespaceAccessLabels: ignore
-        allowedIngressPorts: [http, https]
-      pdb:
-        enabled: false
-    traefik:
-      revisionHistoryLimit:
-      containerSecurityContext:
-        runAsNonRoot: true
-        runAsUser: 65534 # nobody user
-        runAsGroup: 65534 # nobody group
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: "RuntimeDefault"
-      image:
-        name: traefik
-        tag: "v3.3.5"
-      hsts:
-        includeSubdomains: false
-        preload: false
-        maxAge: 15724800
-      networkPolicy:
-        enabled: true
-        egressAllowRules:
-          cloudMetadataServer: true
-          dnsPortsCloudMetadataServer: true
-          dnsPortsKubeSystemNamespace: true
-          dnsPortsPrivateIPs: true
-          nonPrivateIPs: true
-          privateIPs: true
-        interNamespaceAccessLabels: ignore
-        allowedIngressPorts: [http, https]
-      pdb:
-        enabled: false
-      serviceAccount:
-        create: true
-    secretSync:
-      containerSecurityContext:
-        runAsNonRoot: true
-        runAsUser: 65534 # nobody user
-        runAsGroup: 65534 # nobody group
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: "RuntimeDefault"
-      image:
-        name: quay.io/jupyterhub/k8s-secret-sync
-        tag: "4.2.0"
-
   singleuser:
-    networkTools:
-      image:
-        name: quay.io/jupyterhub/k8s-network-tools
-        tag: "4.2.0"
-    cloudMetadata:
-      blockWithIptables: true
-      ip: 169.254.169.254
+    #Disallow any traffic towards anything BUT the user container itself, the hub 
+    #Or the mlflow tracking server
     networkPolicy:
-      enabled: true
-      egressAllowRules:
-        cloudMetadataServer: false
-        dnsPortsCloudMetadataServer: true
-        dnsPortsKubeSystemNamespace: true
-        dnsPortsPrivateIPs: true
-        nonPrivateIPs: true
-        privateIPs: false
+      enabled: false
       egress:
         - to:
           - podSelector:
               matchLabels:
-                app.kubernetes.io/name: minio-obj-storage
-          - podSelector:
-              matchLabels:
-                app.kubernetes.io/name: pgsql-db
+                app: mlflow
           ports:
-            - port: *MINIO_PORT
+            - port: 5000
               protocol: TCP
-            - port: *POSTGRES_PORT
-              protocol: TCP
-      interNamespaceAccessLabels: ignore
-    events: true
     extraLabels:
       hub.jupyter.org/network-access-hub: "true"
-    extraEnv: 
-      AWS_ACCESS_KEY_ID:
-        value: *MINIO_ROOT_USER
-      AWS_SECRET_ACCESS_KEY:
-        value: *MINIO_ROOT_PASSWORD
-      MLFLOW_S3_ENDPOINT_URL:
-        valueFrom:
-          configMapKeyRef:
-            name: services-configmap
-            key: minio_uri
-      MLFLOW_TRACKING_USERNAME:
-        value: "{username}"
-      MLFLOW_TRACKING_PASSWORD:
-        value: "{username}123"
-      MLFLOW_EXPERIMENT_NAME:
-        value: "{username}"
-      JUPYTERHUB_USER: 
-        value: "{username}"
+    extraEnv:
       MLFLOW_TRACKING_URI:
-        value: http://127.0.0.1:5000
-      MINIO_USER:
-        value: *MINIO_ROOT_USER
-      MINIO_PASSWORD:
-        value: *MINIO_ROOT_PASSWORD
-      MINIO_BUCKET:
-        value: *MINIO_DEFAULT_BUCKET
-      MINIO_PORT:
-        valueFrom:
-          configMapKeyRef:
-            name: services-configmap
-            key: minio_port_str
-      MINIO_HOST:
-        valueFrom:
-          configMapKeyRef:
-            name: services-configmap
-            key: minio_service_name
-      POSTGRES_USER:
-        value: *POSTGRES_USER
-      POSTGRES_PASSWORD:
-        value: *POSTGRES_PASSWORD
-      POSTGRES_DATABASE:
-        value: *POSTGRES_DATABASE
-      POSTGRES_PORT:
-        valueFrom:
-          configMapKeyRef:
-            name: services-configmap
-            key: postgres_port_str
-      POSTGRES_HOST:
-        valueFrom:
-          configMapKeyRef:
-            name: services-configmap
-            key: postgres_service_name
-      
+        value: http://mlflow-svc:5000
 
+    #When putting a notebook in the notebook folder
+    #Helm then handles creating the corresponding CM
+    #This is subsequently copied in an initContainer due to permission shennanigans
     initContainers:
       - name: copy-defaults
         image: alpine
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
         command:
           - sh
           - -c
@@ -495,202 +239,46 @@ jhub_central:
             readOnly: true
           - name: volume-{username}-{servername}
             mountPath: /home/jovyan
-        securityContext:
-          runAsUser: 0
-          runAsGroup: 0
-
     allowPrivilegeEscalation: false
     uid: 1000
     fsGid: 100
     storage:
       type: dynamic
       extraVolumes:
+        - name: user-extra-config
+          configMap:
+            name: jhub-extra-config
         - name: default-files
           configMap:
             name: default-files
-        - name: requirements
-          configMap:
-            name: requirements
         - name: home
           persistentVolumeClaim:
             claimName: claim-{username}
       extraVolumeMounts:
+        #This template is used by the user container
+        #To activate extensions from a payload
+        #Passed by the hub in its auth_hook through the spawner.environment
+        - name: user-extra-config
+          mountPath: /etc/jupyter/jupyter_server_config.py
+          subPath: jupyter_server_config.py
+          readOnly: true
         - name: default-files
           mountPath: /default-files
           readOnly: false
-        - name: requirements
-          mountPath: /requirements.txt
-          subPath: requirements.txt
-      static:
-        pvcName: claim-{username}
-        subPath: "{username}"
       capacity: 10Gi
       homeMountPath: /home/jovyan
       dynamic:
         storageClass: *STORAGE_CLASS_NAME
-        pvcNameTemplate: claim-{username}
-        volumeNameTemplate: volume-{user_server}
         storageAccessModes: [ReadWriteOnce]
+    #Custom user env image, pretty much just installs requirement.txt
+    #Can be replaced with jupyter/tensorflow-notebook + a custom command
     image:
-      name: soullessblob/jn-mlflow
+      name: soullessblob/tensorflow-notebook
       tag: latest
-      pullPolicy: Always
-    startTimeout: 600
-    memory:
-      guarantee: 1G
-    cmd:
-      - /usr/local/bin/start-notebook.sh
     defaultUrl: "/lab/tree/mlflow_tensorboard_examples.ipynb"
-
   scheduling:
     userScheduler:
       enabled: true
-      revisionHistoryLimit:
-      replicas: 2
-      logLevel: 4
-      plugins:
-        score:
-          disabled:
-            - name: NodeResourcesBalancedAllocation
-            - name: NodeAffinity
-            - name: InterPodAffinity
-            - name: NodeResourcesFit
-            - name: ImageLocality
-          enabled:
-            - name: NodeAffinity
-              weight: 14631
-            - name: InterPodAffinity
-              weight: 1331
-            - name: NodeResourcesFit
-              weight: 121
-            - name: ImageLocality
-              weight: 11
-      pluginConfig:
-        - name: NodeResourcesFit
-          args:
-            scoringStrategy:
-              type: MostAllocated
-              resources:
-                - name: cpu
-                  weight: 1
-                - name: memory
-                  weight: 1
-      containerSecurityContext:
-        runAsNonRoot: true
-        runAsUser: 65534 # nobody user
-        runAsGroup: 65534 # nobody group
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: "RuntimeDefault"
-      image:
-        name: registry.k8s.io/kube-scheduler
-        tag: "v1.30.11"
-      pdb:
-        enabled: true
-        maxUnavailable: 1
-        minAvailable:
-      serviceAccount:
-        create: true
-    podPriority:
-      enabled: false
-    userPlaceholder:
-      enabled: true
-      image:
-        name: registry.k8s.io/pause
-        tag: "3.10"
-      replicas: 0
-      containerSecurityContext:
-        runAsNonRoot: true
-        runAsUser: 65534 # nobody user
-        runAsGroup: 65534 # nobody group
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: "RuntimeDefault"
-    corePods:
-      tolerations:
-        - key: hub.jupyter.org/dedicated
-          operator: Equal
-          value: core
-          effect: NoSchedule
-        - key: hub.jupyter.org_dedicated
-          operator: Equal
-          value: core
-          effect: NoSchedule
-      nodeAffinity:
-        matchNodePurpose: prefer
-    userPods:
-      tolerations:
-        - key: hub.jupyter.org/dedicated
-          operator: Equal
-          value: user
-          effect: NoSchedule
-        - key: hub.jupyter.org_dedicated
-          operator: Equal
-          value: user
-          effect: NoSchedule
-      nodeAffinity:
-        matchNodePurpose: prefer
-  prePuller:
-    containerSecurityContext:
-      runAsNonRoot: true
-      runAsUser: 65534 # nobody user
-      runAsGroup: 65534 # nobody group
-      allowPrivilegeEscalation: false
-      capabilities:
-        drop: ["ALL"]
-      seccompProfile:
-        type: "RuntimeDefault"
-    hook:
-      enabled: true
-      pullOnlyOnChanges: true
-      image:
-        name: quay.io/jupyterhub/k8s-image-awaiter
-        tag: "4.2.0"
-      containerSecurityContext:
-        runAsNonRoot: true
-        runAsUser: 65534 # nobody user
-        runAsGroup: 65534 # nobody group
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: "RuntimeDefault"
-      podSchedulingWaitDuration: 10
-      serviceAccount:
-        create: true
-      serviceAccountImagePuller:
-        create: true
-    continuous:
-      enabled: true
-      serviceAccount:
-        create: true
-    pullProfileListImages: true
-    pause:
-      containerSecurityContext:
-        runAsNonRoot: true
-        runAsUser: 65534 # nobody user
-        runAsGroup: 65534 # nobody group
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: ["ALL"]
-        seccompProfile:
-          type: "RuntimeDefault"
-      image:
-        name: registry.k8s.io/pause
-        tag: "3.10"
-        pullPolicy:
-        pullSecrets: []
-
   cull:
     enabled: true
-    users: false # --cull-users
-    adminUsers: true # --cull-admin-users
-    removeNamedServers: false # --remove-named-servers
-    timeout: 3600 # --timeout
-    every: 600 # --cull-every
-    concurrency: 10 # --concurrency
-    maxAge: 0 # --max-age
+    timeout: 3600

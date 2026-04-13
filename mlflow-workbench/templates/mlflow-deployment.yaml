@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow-deployment
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: mlflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mlflow
+  template:
+    metadata:
+      labels:
+        app: mlflow
+    spec:
+      volumes:
+        - name: auth-config
+          configMap:
+            name: mlflow-auth-config
+      containers:
+      - name: mlflow-container
+        image: ghcr.io/mlflow/mlflow:latest
+        volumeMounts:
+          - name: auth-config
+            mountPath: /app/config/auth.ini
+            subPath: auth.ini
+        env:
+          - name: MLFLOW_FLASK_SERVER_SECRET_KEY
+            value: {{ randAlphaNum 32 | b64enc | quote }}
+          - name: MLFLOW_AUTH_CONFIG_PATH
+            value: "/app/config/auth.ini"
+          - name: MLFLOW_LOGGING_LEVEL
+            value: DEBUG
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: {{ printf "http://%s-minio-obj-storage:%d" .Release.Name (int .Values.mlflow.minio_port) | quote }}
+          - name:	MLFLOW_SERVER_ALLOWED_HOSTS
+            {{ if .Values.expose.enabled }}
+            value: {{ printf "localhost:5000,mlflow-svc:5000,%s" .Values.expose.hostname }}
+            {{ else }}
+            value: "localhost:5000,mlflow-svc:5000"
+            {{ end }}
+          - name: AWS_ACCESS_KEY_ID
+            value: {{ .Values.mlflow.minio_user | quote }}
+          - name: AWS_SECRET_ACCESS_KEY
+            value: {{ .Values.mlflow.minio_password | quote }}
+          - name: POSTGRES_URI
+            value: {{printf "postgresql://%s:%s@%s-pgsql-db:%d/%s" .Values.mlflow.postgres_user .Values.mlflow.postgres_password .Release.Name (int .Values.mlflow.postgres_port) .Values.mlflow.postgres_database}}
+        command: ["/bin/bash","-c"]
+        args:
+          - |
+            pip install mlflow[auth]
+            mlflow server \
+              --app-name basic-auth \
+              --host 0.0.0.0 \
+              --port 5000 \
+              --serve-artifacts \
+              --enable-workspaces \
+              --backend-store-uri $POSTGRES_URI \
+              --artifacts-destination {{ printf "s3://%s" .Values.mlflow.minio_bucket | quote }}
