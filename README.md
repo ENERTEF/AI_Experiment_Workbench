@@ -5,19 +5,24 @@
    * [Architecture](#architecture)
       + [Data Flow](#data-flow)
    * [Components](#components)
-   * [Directory Structure](#directory-structure)
+   * [Helm chart files](#helm-chart-files)
+      + [`base-app` - User Notebooks](#base-app-user-notebooks)
+      + [`flower-app` - Flower app template](#flower-app-flower-app-template)
    * [Setup and Deployment](#setup-and-deployment)
       + [Prerequisites](#prerequisites)
       + [Custom Images (Built Locally)](#custom-images-built-locally)
       + [Deployment Steps](#deployment-steps)
    * [Usage Workflow](#usage-workflow)
       + [Basic Workflow](#basic-workflow)
-      + [MLflow Experiment Tracking](#mlflow-experiment-tracking)
-      + [TensorBoard Visualization](#tensorboard-visualization)
-   * [Port Mappings](#port-mappings)
    * [Advanced Features](#advanced-features)
       + [MLflow User Isolation](#mlflow-user-isolation)
       + [Integrated Extensions](#integrated-extensions)
+   * [Storage Usage](#storage-usage)
+   * [Troubleshooting](#troubleshooting)
+      + [Service Access Issues](#service-access-issues)
+      + [Notebook Startup Problems](#notebook-startup-problems)
+      + [MLflow Issues](#mlflow-issues)
+      + [Useful Commands](#useful-commands)
    * [Development and Customization](#development-and-customization)
       + [Adding User Scripts](#adding-user-scripts)
       + [Environment Modifications](#environment-modifications)
@@ -35,24 +40,38 @@
 The EnerTEF JupyterHub ML Platform is a containerized machine learning environment built on Kubernetes. It provides isolated Jupyter notebook servers for each user, integrated with experiment tracking, visualization, and storage services.
 
 The platform includes:
-- JupyterHub for multi-user notebook management
-- TensorBoard for training visualization
-- MLflow for experiment tracking and model management
-- MinIO for S3-compatible object storage
-- PostgreSQL database with pgAdmin interface
+- JupyterHub for multi-user notebook management.
+- TensorBoard for training visualization.
+- MLflow for experiment tracking and model management.
+- Flower for federated learning.
 
 A visual presentation can be found [here](docs/visualREADME.md).
 
 <!-- TOC --><a name="architecture"></a>
 ## Architecture
+The architecture is split: Within a single instance of this application, and accross multiple instances of the application
+The following is within a single instance:
 
 ![Architecture](docs/images/architecture.png)
+
+If flower is enabled, the flower architecture becomes relevant:
+
+![Flower-architecture](docs/images/flower-architecture.svg)
+[source](https://flower.ai)
+
+The serverapp always ends up in the server, i.e, the superexec belonging to the superlink. This allows to provisiong both the local admin mlflow credentials on the hub instance, and the remote , user specific mlflow credentials for the client instance. The serverapp then uses that to log into both mlflow tracking servers, allowing for proper namespaced and selective model sharing:
+
+![Exterior-architecture](docs/images/extarch.png)
+
+Centralized and remote logging is only possible from the serverapp, because the client app can run in any arbitrary supernode ( other client ), making the superlink the center point of the setup. 
+An app deployed as hub will generate certificates, these should be passed to apps deployed as nodes/clients, that they may reach the superlink.
+
 
 <!-- TOC --><a name="data-flow"></a>
 ### Data Flow
 1. Users access JupyterHub via web interface
 2. Each user gets a dedicated Kubernetes pod with Jupyter notebook
-3. ML tools (TensorBoard, MLflow) run as integrated extensions
+3. ML tools (TensorBoard, MLflow, Flower) run as integrated extensions
 4. Data persists in MinIO and PostgreSQL
 5. All services communicate through Kubernetes networking
 
@@ -75,41 +94,30 @@ Experiment tracking and model management platform. Provides:
 - Experiment comparison
 - User-based isolation (group isolation not implemented)
 
-<!-- TOC --><a name="minio"></a>
-### MinIO
-S3-compatible object storage for datasets, model artifacts, and logs. Accessible from notebooks for data management and persistence.
-
-<!-- TOC --><a name="postgresql-pgadmin"></a>
-### PostgreSQL & pgAdmin
-- PostgreSQL: Primary database for MLflow metadata and persistent data
-- pgAdmin: Web-based database administration interface
+<!-- TOC --><a name="flower-ai"></a>
+### Flower AI
+Federated learning/running of ML tasks. Flower breaks down every ML process into a client and server application. These are then deployed and ran selectively in arbitrary nodes. A clientapp usually contains the actual learning process. A serverapp aggregates from multiple of the same clientapp type. This level of customization allows us to weave MLFlow around flower.
 
 <!-- TOC --><a name="kubernetes"></a>
 ### Kubernetes
 Container orchestration platform managing all services, networking, and resource allocation. Uses k3d for local development environments.
 
-<!-- TOC --><a name="directory-structure"></a>
-## Directory Structure
+<!-- TOC --><a name="helm-chart-files"></a>
+## Helm chart files
 
-<!-- TOC --><a name="helmchart-infrastructure-configuration"></a>
-### `mlfw-workbench` - Helm Chart
-Contains Helm Chart template and values.
+<!-- TOC --><a name="base-app-user-notebooks"></a>
+### `base-app` - User Notebooks
+Contains files and demo notebooks for the base user environment.
 
-<!-- TOC --><a name="srcnotebook-scripts-user-environment-templates"></a>
-### `src/notebook-scripts/` - User Environment Templates
-Files automatically copied to new user home directories:
-- `requirements.txt`: Python dependencies for notebooks
-- `tensorboard_logger.py`: TensorBoard logging utilities
-- `mlflow_group_utils.py`: MLflow user management utilities
-- Example notebooks for common workflows
+<!-- TOC --><a name="flower-app-flower-app-template"></a>
+### `flower-app` - Flower app template
+Contains a clientapp, serverapp and pyproject.toml used by the flower supernode to create an fab files it sends to the superlink
 
 <!-- TOC --><a name="setup-and-deployment"></a>
 ## Setup and Deployment
 
 <!-- TOC --><a name="prerequisites"></a>
 ### Prerequisites
-
-- Any cluster management software: k3s, k3d, kubernetes, kind...etc
 
 - Kubernetes tools:
   - kubectl v1.33.2 or later
@@ -119,6 +127,13 @@ Files automatically copied to new user home directories:
   # Install kubectl
   curl -LO "https://dl.k8s.io/release/v1.33.2/bin/linux/amd64/kubectl"
   sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+  ```
+  - k3d v5.8.3 or later (with k3s v1.31.5-k3s1)
+  For official installation instuctions, visit:
+  https://k3d.io/stable/#releases
+  ```bash
+  # Install k3d
+  curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
   ```
 
 - Helm v3.18.3 or later
@@ -131,136 +146,110 @@ Files automatically copied to new user home directories:
   ./get_helm.sh
   ```
 
-You can use [this cluster starter](https://github.com/SystemsPurge/cluster-starter) for local setups.
+Or use the cluster-starter module with the cluster manager of your choice for a setup including networking ( local or remote ), certification and git runners if needed.
 
 <!-- TOC --><a name="custom-images-built-locally"></a>
 ### Custom Images (Built Locally)
-
-- **jn-mlflow**: Built from `/jn-tb/mlflow.Dockerfile` using the start script - contains Jupyter Notebook with MLflow integration
-This image ends up being referenced for the user environment in the values.yaml
+All are in the images directory. Mainly to avoid installing dependencies on deployment, these images simply contain the python packages used by: The user notebook, the flower clientapp and the flower serverapp.
 
 <!-- TOC --><a name="deployment-steps"></a>
 ### Deployment Steps
 
 1. Clone repository and navigate to kubernetes directory:
 ```bash
-git clone <repository-url>
+git clone --recurse-submodules <repository-url>
 cd AI_Experiment_Workbench
 ```
 
-2. Change top level ( anchored ) values in mlflow-workbench/values.yaml as needed.
-
-3. Install chart:
+2. Install cluster manager of your choice, eg:
 ```bash
-helm upgrade --install mlfw -f mlflow-workbench/values.yaml ./mlflow-workbench --namespace mlfw --create-namespace
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server" sh -s - --flannel-backend none --token 12345
 ```
-This installs the configured jupyter-hub instance, minio and postgres.
-
-4. Access services via port forwarding:
+3. Install dependencies:
 ```bash
-kubectl port-forward service/<jhub-service-name> -n <deployment-namespace> <host-port>:8080
+cd cluster-start
+chmod +x cluster-create.sh && ./cluster-create.sh
+chmod +x cluster-prepate.sh && ./cluster-prepare.sh
 ```
-This will expose jupyter-hub under localhost:8080
+4. Install chart ( change values beforehand if needed ):
+```bash
+helm upgrade --install mlfw -n mlfw --create-namespace ./mlflow-workbench -f mlflow-workbench/values.yaml
+```
 
-Alternatively if you have a local dns setup, cloud-provider or loadbalancer, you can rely on
-gateways/ingress by passing the corresponding domain name to the values.
-
-
+Chart gives possibility to expose everything under a hostname. For a local setup, port-forward the controller ports to localhost, and use dnsmasq for a local record pointing to the loopback address.
 <!-- TOC --><a name="usage-workflow"></a>
 ## Usage Workflow
 
 <!-- TOC --><a name="basic-workflow"></a>
 ### Basic Workflow
 
-1. Log into JupyterHub at http://localhost:8080
-2. Create username and launch notebook server:
-    - Use only alphanumeric characters (letters and numbers)
-    - Username is case insensitive
-3. Access pre-installed libraries and scripts in the `/notebook-scripts/` directory
-
-<!-- TOC --><a name="mlflow-experiment-tracking"></a>
-### MLflow Experiment Tracking
-
-```python
-import mlflow
-
-# Set experiment name
-mlflow.set_experiment("experiment_name")
-
-# Log parameters, metrics, and artifacts
-with mlflow.start_run():
-    mlflow.log_param("learning_rate", 0.01)
-    mlflow.log_metric("accuracy", 0.95)
-    mlflow.log_artifact("model.pkl")
-```
-
-<!-- TOC --><a name="tensorboard-visualization"></a>
-### TensorBoard Visualization
-
-```python
-from tensorboard_logger import TensorBoardLogger
-
-logger = TensorBoardLogger()
-# Use logger to track training metrics
-```
-<!-- TOC --><a name="port-mappings"></a>
-## Port Mappings
-
-The platform exposes several services on the following ports:
-
-| Service               | Port  | Description                               |
-|-----------------------|-------|-------------------------------------------|
-| Registry              | 5001  | Docker registry for custom images         |
-| JupyterHub            | 8080  | Web interface for notebook access         |
-| JupyterHub Internal   | 8081  | Hub's internal service port               |
-| MinIO                 | 9000  | S3-compatible object storage API          |
-| MinIO Console         | 9001  | Web interface for MinIO management        |
-| PostgreSQL            | 5432  | Database connection port                  |
-| pgAdmin               | 5050  | Web interface for database management     |
-
-Additionally, ports 80 and 9090 have to be opened for Kubernetes services and internal routing to work. 
-This is done by the start script.
-
-Access these services by visiting `http://localhost:<PORT>` in your web browser after using the `kubectl port-forward` command.
-Or under the pre-configured hostname when enabling ingress/gateways.
-
-
-**Note:** Not all services and ports are designed for web access. Some are exposed for API access, internal services, or diagnostics purposes only. These include:
-- Registry port (5001) - Used for Docker image storage
-- MinIO API port (9000) - For S3 API access
-- PostgreSQL port (5432) - For direct database connections
-- JupyterHub internal ports - For service communications
-
-These ports are exposed to allow direct connections when needed for development, debugging, or custom integrations.
+1. Log into JupyterHub at http://\<hostname\>:8080 using pre-configured users if no external keycloak is provided(admin-/stander-user)
+2. Access pre-installed libraries and scripts in the `/notebook-scripts/` directory
 
 <!-- TOC --><a name="advanced-features"></a>
 ## Advanced Features
 
 <!-- TOC --><a name="mlflow-user-isolation"></a>
 ### MLflow User Isolation
-- Each user has isolated experiment tracking
-- User-specific database schemas prevent data mixing
-- Group-based isolation not currently implemented
+This project uses the v3.0 mlflow API which provides natural workspace isolation. The notebook auth hooks make sure to create workspaces and assign the proper permissions on each login. Admin users have access to all workspaces, standard users with a given "username" have access to the workspace "ws-username"
 
 <!-- TOC --><a name="integrated-extensions"></a>
 ### Integrated Extensions
 - MLflow and TensorBoard accessible directly from notebooks
-- Automatic startup with notebook environment
 - Seamless integration without additional configuration
+
+
+<!-- TOC --><a name="storage-usage"></a>
+## Storage Usage
+All data is persisted between user sessions, and only disappears on active culling of the user pod. The culling interval can be configured in the values.yaml, and so are all possible persistence volume size ( pgsql, minio, jupyter hub and mlflow )
+
+<!-- TOC --><a name="troubleshooting"></a>
+## Troubleshooting
+
+<!-- TOC --><a name="service-access-issues"></a>
+### Service Access Issues
+- Verify port forwarding is active
+- Check pod status: `kubectl get pods`
+- Restart port forwarding if needed
+
+<!-- TOC --><a name="notebook-startup-problems"></a>
+### Notebook Startup Problems
+- Check pod status: `kubectl get pods`
+- View pod logs: `kubectl logs <pod-name>`
+- Verify resource availability
+
+<!-- TOC --><a name="mlflow-issues"></a>
+### MLflow Issues
+- Confirm PostgreSQL is running: `kubectl get pods`
+- Check MLflow server logs
+- Verify database connectivity
+
+<!-- TOC --><a name="useful-commands"></a>
+### Useful Commands
+```bash
+# Check all pods
+kubectl get pods --all-namespaces
+
+# View pod logs
+kubectl logs <pod-name>
+
+# Check resource usage
+kubectl top pods
+```
 
 <!-- TOC --><a name="development-and-customization"></a>
 ## Development and Customization
 
 <!-- TOC --><a name="adding-user-scripts"></a>
 ### Adding User Scripts
-- Place scripts that should be pre-loaded in `src/notebook-scripts/`
+- Place scripts that should be pre-loaded in `base-app/`
 - Update `requirements.txt` for new dependencies
 - Scripts are automatically copied to user directories
 
 <!-- TOC --><a name="environment-modifications"></a>
 ### Environment Modifications
-- Modify Dockerfiles in `src/jn-tb/` for base images
-- Update Helm values in `deploy/kubernetes/values/`
+- Modify Dockerfiles in `images` for base images
+- Update Helm values in `values.yaml`
 - Add services via Kubernetes manifests
 
 <!-- TOC --><a name="summary"></a>
