@@ -14,6 +14,7 @@ def train(msg: Message, context: Context):
     model_record = ArrayRecord(updated_model)
     metrics = {
         "loss": 0.5,
+        "accuracy": 0.9,
         "num-examples": 100,
     }
     

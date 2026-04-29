@@ -55,7 +55,6 @@ data:
     GROUPS_KEY = {{ include "keycloak.groups_key" . | quote }}
     ADMIN_GROUPS = {{ include "keycloak.admin_groups" . }}
     MLFLOW_SVC = "http://mlflow-svc:5000"
-    
     def auth_state_hook(spawner, auth_state):
         oauth_user = auth_state.get('oauth_user', {})
         username = oauth_user.get('preferred_username')
@@ -165,3 +164,31 @@ data:
 
     #set the auth hook
     c.Spawner.auth_state_hook = auth_state_hook
+    {{- if .Values.flower.enabled }}
+    def flower_cert_hook(spawner):
+        secret_name = {{ (include "flower.tls_secret_name" .) | quote }}
+        
+        flower_volume = {
+            'name': 'flower-certs',
+            'secret': {
+                'secretName': secret_name,
+                'items': [{
+                    'key': 'ca.crt',
+                    'path': 'ca.crt'
+                }]
+            }
+        }
+        
+        flower_mount = {
+            'name': 'flower-certs',
+            'mountPath': '/app/certs',
+            'readOnly': True
+        }
+
+        spawner.volumes['flower_volume'] = flower_volume
+        spawner.volume_mounts['flower_mount'] = flower_mount
+        #For some reason, Tensorboard is very chatty within flwr commands
+        spawner.environment['TF_CPP_MIN_LOG_LEVEL'] = '3'
+    
+    c.Spawner.pre_spawn_hook = flower_cert_hook
+    {{- end }}

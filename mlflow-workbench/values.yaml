@@ -82,7 +82,7 @@ expose:
     cert-manager.io/issuer-group: "certmanager.step.sm"
   }
   #tls/ingress hostname
-  hostname: "jhub-mlfw.k3s.osc.eonerc.rwth-aachen.de"
+  hostname: "mlfw.k3s.osc.eonerc.rwth-aachen.de"
 
 #A copy of the values of the cloudpirates minio subchart
 minio-obj-storage:
@@ -150,12 +150,12 @@ mlflow:
 #Mainly to specify who is hub and who is client
 #TODO: Support remote (possibly Ray tune) or deployed cluster for task scheduling
 flower:
-  enabled: false
-  hub_address: "flower-svc.flwr-tmp.svc.cluster.local:9092"
-  as_hub: false
+  enabled: true
+  hub_address: "flower-server-svc.flwr-tmp.svc.cluster.local:9092"
+  as_hub: true
   issuer_ref:
-    name: step-issuer,
-    kind: "StepClusterIssuer",
+    name: step-issuer
+    kind: "StepClusterIssuer"
     group: "certmanager.step.sm"
 #A copy of the values of the Z2JH subchart
 #The primary function of the hub in this app is to handle redirects from the IDP
@@ -190,6 +190,8 @@ jhub_central:
       name: quay.io/jupyterhub/k8s-hub
       tag: "4.2.0"
   proxy:
+    service:
+      type: ClusterIP
     secretToken: '4d514a528099e35c7c7fd48acf9c9454ae41705412966f4a730d6c2f688cf948'
   singleuser:
     #Disallow any traffic towards anything BUT the user container itself, the hub 

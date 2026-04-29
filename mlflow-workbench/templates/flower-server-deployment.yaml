@@ -28,22 +28,27 @@ spec:
             - "process"
             - "--fleet-api-address"
             - "0.0.0.0:9092"
-            - "--ssl-ca-certfile=/app/certs/ca.crt"
-            - "--ssl-keyfile=/app/certs/tls.key"
+            - "--ssl-ca-certfile"
+            - "/app/certs/ca.crt"
+            - "--ssl-certfile"
+            - "/app/certs/tls.crt"
+            - "--ssl-keyfile"
+            - "/app/certs/tls.key"
           volumeMounts:
             - name: certs-vol
               mountPath: /app/certs
               readOnly: true
           ports:
             - containerPort: 9092
+            - containerPort: 9093
         - name: superexec
           image: soullessblob/flower-server:latest
           env:
-            - name: HUB_SYSTEM_MLFLOW_URI
+            - name: MLFLOW_TRACKING_URI
               value: "http://mlflow-svc:5000"
-            - name: HUB_SYSTEM_MLFLOW_USER
+            - name: MLFLOW_TRACKING_USERNAME
               value: {{ .Values.mlflow.mlflow_admin_username | quote }}
-            - name: HUB_SYSTEM_MLFLOW_PASS
+            - name: MLFLOW_TRACKING_PASSWORD
               value: {{ .Values.mlflow.mlflow_admin_password | quote }}
           args: 
             - --insecure

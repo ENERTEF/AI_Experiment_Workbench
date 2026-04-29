@@ -9,7 +9,7 @@ data:
     {{ base $path | nindent 2 }}: |-
 {{ $.Files.Get $path | nindent 4 }}
   {{ end }}
-  {{- if .Values.flower.enable }}
+  {{- if .Values.flower.enabled }}
   {{ range $path, $_ :=  .Files.Glob "flower-app/*.{py,toml,ipynb}" }}
     {{ base $path | nindent 2 }}: |-
 {{ $.Files.Get $path | nindent 4 }}

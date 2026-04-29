@@ -5,6 +5,7 @@ from flwr.app import ArrayRecord,MetricRecord
 from flwr.serverapp import ServerApp
 from flwr.serverapp.strategy import FedAvg
 from datetime import datetime
+from flwr.common import ArrayRecord
 
 app = ServerApp()
 
@@ -18,21 +19,13 @@ def weighted_average(results, weighted_by_key):
 
 @app.main()
 def main(grid,context):
-    remote_client = None
-    hub_client = None
-    hub_uri = os.environ.get("HUB_SYSTEM_MLFLOW_URI")
-    hub_user = os.environ.get("HUB_SYSTEM_MLFLOW_USER")
-    hub_pass = os.environ.get("HUB_SYSTEM_MLFLOW_PASS")
-    #hub_client = mlflow.MlflowClient(tracking_uri=hub_uri)
+    ndarrays = [
+        np.random.randn(10, 5).astype(np.float32),
+        np.zeros(5).astype(np.float32)
+    ]
 
-    is_remote = context.run_config.get("run-remote", "false").lower() == "true"
-    if is_remote:
-        remote_uri = context.run_config.get("user-mlflow-uri")
-        remote_user = context.run_config.get("user-mlflow-username")
-        remote_pass = context.run_config.get("user-mlflow-password")
-        #remote_client = mlflow.MlflowClient(tracking_uri=remote_uri)
-        
-    with mlflow.start_run(run_name=datetime.now().strftime("%Y%m%d_%H%M%S")):
+    arrays = ArrayRecord(ndarrays)
+    with mlflow.start_run():
         strategy = FedAvg(
             evaluate_metrics_aggr_fn=weighted_average,
             weighted_by_key="num-examples",

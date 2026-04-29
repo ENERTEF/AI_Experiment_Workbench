@@ -19,7 +19,7 @@ spec:
       volumes:
         - name: certs-vol
           secret:
-            secretName: {{ include "flower.tls_secret_name" }}
+            secretName: {{ (include "flower.tls_secret_name" .) }}
             items:
               - key: ca.crt
                 path: "ca.crt"
