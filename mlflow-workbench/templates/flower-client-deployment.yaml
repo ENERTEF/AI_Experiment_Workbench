@@ -26,6 +26,9 @@ spec:
       containers:
         - name: supernode
           image: flwr/supernode:latest
+          env:
+            - name: FLWR_LOG_LEVEL
+              value: DEBUG
           args: 
             - "--isolation"
             - "process"

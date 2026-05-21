@@ -23,9 +23,14 @@ spec:
       containers:
         - name: superlink
           image: flwr/superlink:latest
+          env:
+            - name: FLWR_LOG_LEVEL
+              value: DEBUG
           args: 
             - "--isolation"
             - "process"
+            - "--serverappio-api-address"
+            - "0.0.0.0:9091"
             - "--fleet-api-address"
             - "0.0.0.0:9092"
             - "--ssl-ca-certfile"

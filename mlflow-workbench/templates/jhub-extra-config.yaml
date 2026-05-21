@@ -135,8 +135,7 @@ data:
                     "absolute_url": False,
                     "request_headers_override": {
                         "Authorization": f"Basic {encoded_auth}",
-                        "Host":"mlflow-svc:5000",
-                        "Origin": MLFLOW_SVC
+                        "Host":"mlflow-svc:5000"
                     },
                     "launcher_entry": {
                         "title": "MLflow UI",

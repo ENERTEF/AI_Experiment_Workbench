@@ -55,6 +55,11 @@ spec:
               --app-name basic-auth \
               --host 0.0.0.0 \
               --port 5000 \
+              {{- if .Values.expose.enabled }}
+              --cors-allowed-origins "https://{{ .Values.expose.hostname }}" \
+              {{- else }}
+              --cors-allowed-origins http://localhost \
+              {{- end }}
               --serve-artifacts \
               --enable-workspaces \
               --backend-store-uri $POSTGRES_URI \
