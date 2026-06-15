@@ -12,6 +12,7 @@ spec:
   dnsNames:
     - flower-server-svc
     {{- if .Values.expose.enabled }}
-    - {{ .Values.expose.hostname }}
+    - {{ printf "flower-server.%s" .Values.expose.hostname }}
+    - {{ printf "flower-server-ctrl.%s" .Values.expose.hostname }}
     {{- end }}
 {{- end }}

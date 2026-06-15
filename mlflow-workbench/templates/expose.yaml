@@ -38,14 +38,50 @@ spec:
                 name: keycloak-svc
                 port: { number: 8080 }
           {{- end }}
-          {{- if and .Values.flower.enabled .Values.flower.as_hub }}
-          - path: /flower-server
+{{- if and .Values.flower.enabled .Values.flower.as_hub }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jhub-flower-ingress
+  namespace: {{ .Release.Namespace }}
+spec:
+  ingressClassName: {{ .Values.expose.ingress.className }}
+  tls:
+    - hosts: [{{ printf "flower-server.%s" .Values.expose.hostname | quote }}]
+      secretName: flower-server-tls
+  rules:
+    - host: {{ printf "flower-server.%s" .Values.expose.hostname | quote }}
+      http:
+        paths:
+          - path: /
             pathType: Prefix
             backend:
               service:
                 name: flower-server-svc
                 port: { number: 9092 }
-          {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jhub-flower-ingress-ctrl
+  namespace: {{ .Release.Namespace }}
+spec:
+  ingressClassName: {{ .Values.expose.ingress.className }}
+  tls:
+    - hosts: [{{ printf "flower-server-ctrl.%s" .Values.expose.hostname | quote }}]
+      secretName: flower-server-tls
+  rules:
+    - host: {{ printf "flower-server-ctrl.%s" .Values.expose.hostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: flower-server-svc
+                port: { number: 9093 }
+{{- end }}
 {{- else if eq .Values.expose.type "gateway" }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute

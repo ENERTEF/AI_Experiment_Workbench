@@ -74,9 +74,9 @@ expose:
   #Is configured over https
   #The jhub instance will conditionally disable tls verification, if expose.enabled=false
   annotations: {
-    cert-manager.io/issuer: step-issuer,
-    cert-manager.io/issuer-kind: "StepClusterIssuer",
-    cert-manager.io/issuer-group: "certmanager.step.sm"
+    #cert-manager.io/issuer: step-issuer,
+    #cert-manager.io/issuer-kind: "StepClusterIssuer",
+    #cert-manager.io/issuer-group: "certmanager.step.sm"
     #cert-manager.io/cluster-issuer: letsencrypt-prod
   }
   #tls/ingress hostname
