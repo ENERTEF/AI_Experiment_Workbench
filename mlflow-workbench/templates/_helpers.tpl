@@ -68,3 +68,13 @@ Placu no Horderu
     flower-client-tls
   {{- end -}}
 {{- end -}}
+
+{{- define "federated.workspace_name" -}}
+  ws-federated
+{{- end -}}
+{{- define "federated.experiment_name" -}}
+  exp-federated
+{{- end -}}
+{{- define "federated.experiment_id" -}}
+  1
+{{- end -}}

@@ -24,7 +24,7 @@ spec:
               service:
                 name: proxy-public
                 port: { number: 80 }
-          - path: /mlflow
+          - path: /api
             pathType: Prefix
             backend:
               service:

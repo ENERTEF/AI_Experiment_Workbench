@@ -32,7 +32,7 @@ spec:
           - name: MLFLOW_AUTH_CONFIG_PATH
             value: "/app/config/auth.ini"
           - name: MLFLOW_LOGGING_LEVEL
-            value: DEBUG
+            value: INFO
           - name: MLFLOW_S3_ENDPOINT_URL
             value: {{ printf "http://%s-minio-obj-storage:%d" .Release.Name (int .Values.mlflow.minio_port) | quote }}
           - name:	MLFLOW_SERVER_ALLOWED_HOSTS

@@ -1,0 +1,154 @@
+{{- if .Values.flower.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fed-env-post-hook
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    # This marks the job as a post-hook that runs after everything else is deployed
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: provisioner
+          image: python:3.11-slim
+          env:
+            - name: FED_USER
+              value: {{ .Values.flower.fed_username | quote }}
+            - name: FED_PASS
+              value: {{ .Values.flower.fed_password | quote }}
+            - name: FED_EXP_NAME
+              value: {{ include "federated.experiment_name" . }}
+            - name: FED_WS_NAME
+              value: {{ include "federated.workspace_name" . }}
+            - name: MLFLOW_ADMIN_USER
+              value: {{ .Values.mlflow.mlflow_admin_username | quote }}
+            - name: MLFLOW_ADMIN_PASS
+              value: {{ .Values.mlflow.mlflow_admin_password | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              pip install --no-cache-dir requests > /dev/null 2>&1
+              python -c '
+              import requests
+              import os
+              import base64
+              import secrets
+              import json
+              import time
+              import sys
+
+              MLFLOW_SVC = "http://mlflow-svc:5000"
+              HEALTH_ENDPOINT = f"{MLFLOW_SVC}/health"
+              
+              # --- STEP 1: WAIT FOR MLFLOW TO START UP ---
+              print("Waiting for MLflow Tracking Server to become healthy...", flush=True)
+              max_retries = 30
+              retry_interval = 10  # total of 300 seconds (5 mins) max wait time
+              
+              for i in range(max_retries):
+                  try:
+                      response = requests.get(HEALTH_ENDPOINT, timeout=3)
+                      if response.status_code == 200:
+                          print("MLflow is UP and healthy! Proceeding with configuration.", flush=True)
+                          break
+                  except requests.exceptions.RequestException:
+                      pass
+                  
+                  print(f"[{i+1}/{max_retries}] MLflow not ready yet. Retrying in {retry_interval}s...", flush=True)
+                  time.sleep(retry_interval)
+              else:
+                  print("CRITICAL: MLflow failed to start within the given timeout period.", file=sys.stderr, flush=True)
+                  sys.exit(1)
+
+              MLFLOW_ADMIN = os.environ["MLFLOW_ADMIN_USER"]
+              MLFLOW_PASS = os.environ["MLFLOW_ADMIN_PASS"]
+              username = os.environ["FED_USER"]
+              workspace_name = os.environ["FED_WS_NAME"]
+              experiment_name = os.environ["FED_EXP_NAME"]
+              password = os.environ["FED_PASS"]
+              
+              try:
+                auth_header = base64.b64encode(f"{MLFLOW_ADMIN}:{MLFLOW_PASS}".encode()).decode()
+                headers = {"Authorization": f"Basic {auth_header}"}
+
+                res = requests.get(
+                  f"{MLFLOW_SVC}/api/2.0/mlflow/users/get", 
+                  params={"username": username}, 
+                  headers=headers, 
+                  timeout=5
+                )
+
+                if res.status_code != 200:
+                    print(f"User {username} not found. Provisioning account...", flush=True)
+                    res = requests.post(
+                        f"{MLFLOW_SVC}/api/2.0/mlflow/users/create",
+                        json={"username":username,"password":password},
+                        headers={**headers,"Content-Type":"application/json"},
+                        timeout=5
+                    )
+                    res.raise_for_status()
+
+                    res = requests.patch(
+                        f"{MLFLOW_SVC}/api/2.0/mlflow/users/update-admin",
+                        json={"username": username, "is_admin": False},
+                        headers={**headers,"Content-Type":"application/json"}, 
+                        timeout=5
+                    )
+                    res.raise_for_status()
+
+                    res = requests.post(
+                      f"{MLFLOW_SVC}/api/3.0/mlflow/workspaces", 
+                      json={"name": workspace_name}, 
+                      headers={**headers,"Content-Type":"application/json"},
+                      timeout=5
+                    )
+                    res.raise_for_status()
+
+                    res = requests.post(
+                      f"{MLFLOW_SVC}/api/3.0/mlflow/roles/create", 
+                      json={"name": f"{workspace_name}-reader","workspace":workspace_name}, 
+                      headers={**headers,"Content-Type":"application/json"},
+                      timeout=5
+                    )
+                    res.raise_for_status()
+                    jres = res.json()
+                    print(jres)
+                    role_id = jres["role"]["id"]
+
+                    res = requests.post(
+                      f"{MLFLOW_SVC}/api/3.0/mlflow/roles/permissions/add", 
+                      json={"permission":"USE","resource_pattern":"*","resource_type":"workspace","role_id":role_id}, 
+                      headers={**headers,"Content-Type":"application/json"},
+                      timeout=5
+                    )
+                    res.raise_for_status()
+
+                    res = requests.post(
+                      f"{MLFLOW_SVC}/api/3.0/mlflow/roles/assign", 
+                      json={"role_id":role_id,"username":username},
+                      headers={**headers,"Content-Type":"application/json"},
+                      timeout=5
+                    )
+                    res.raise_for_status()
+                    
+
+                    res = requests.post(
+                      f"{MLFLOW_SVC}/api/2.0/mlflow/experiments/create",
+                      json={"name":experiment_name},
+                      headers={**headers,"Content-Type":"application/json","X-MLFLOW-WORKSPACE":workspace_name},
+                      timeout=5
+                    )
+                    res.raise_for_status()
+
+                    print("User and workspaces provisioned successfully.", flush=True)
+                else:
+                    print(f"User {username} already exists. Skipping provisioning.", flush=True)
+              except Exception as e:
+                  print(f"Execution failed: {e}", file=sys.stderr, flush=True)
+                  sys.exit(1)
+              '
+{{- end }}

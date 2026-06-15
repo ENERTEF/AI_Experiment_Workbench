@@ -28,7 +28,7 @@ spec:
           image: flwr/supernode:latest
           env:
             - name: FLWR_LOG_LEVEL
-              value: DEBUG
+              value: INFO
           args: 
             - "--isolation"
             - "process"
@@ -38,12 +38,25 @@ spec:
             - {{ printf "%s" (include "flower.hub_superlink" .) | quote }}
             - "--root-certificates"
             - "/app/certs/ca.crt"
+            - "--node-config"
+            - {{ printf "dataset_tags=\"%s\"" (join "," .Values.flower.dataset_tags) | quote }}
           volumeMounts:
             - name: certs-vol
               mountPath: /app/certs
               readOnly: true
         - name: superexec
           image: soullessblob/flower-client:latest
+          env:
+            - name: FEDERATED_EXPERIMENT_ID
+              value: {{ include "federated.experiment_id" . | quote}}
+            - name: MLFLOW_WORKSPACE
+              value: {{ include "federated.workspace_name" . | quote}}
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow-svc:5000"
+            - name: MLFLOW_TRACKING_USERNAME
+              value: {{ .Values.flower.fed_username | quote }}
+            - name: MLFLOW_TRACKING_PASSWORD
+              value: {{ .Values.flower.fed_password | quote }}
           args: 
             - --insecure
             - --plugin-type

@@ -16,9 +16,6 @@ shared_values:
   postgres_password: &POSTGRES_PASSWORD "mlflow"
   postgres_db: &POSTGRES_DATABASE "mlflow"
   postgres_port: &POSTGRES_PORT 5432
-  #Kubernetes persistentVolume classname (e.g rook-ceph-block)
-  #Defaults to local-path, requiring cluster admin privileges
-  storage_class_name: &STORAGE_CLASS_NAME "local-path"
   hub_admin_token: &HUB_ADMIN_TOKEN "cGFzcwo=" #"<put some base64 encoded string here>"
 
 #Jupyterhub is configured to use an auth_state_hook
@@ -33,7 +30,7 @@ auth:
   #The client for this app. If keycloak is external, then it is assumed that the client
   #For this app is configured with these values
   client_id: "jhub-mlfw"
-  client_secret: "f7S7nref4Tpe5kQA7ReTmSvutjya0fKu"
+  client_secret: ""
   #Keycloak bootstrapping credentials for generating a master realm + admin user
   kc_admin: "admin"
   kc_admin_pass: "admin"
@@ -80,6 +77,7 @@ expose:
     cert-manager.io/issuer: step-issuer,
     cert-manager.io/issuer-kind: "StepClusterIssuer",
     cert-manager.io/issuer-group: "certmanager.step.sm"
+    #cert-manager.io/cluster-issuer: letsencrypt-prod
   }
   #tls/ingress hostname
   hostname: "mlfw.k3s.osc.eonerc.rwth-aachen.de"
@@ -98,7 +96,6 @@ minio-obj-storage:
 
   persistence:
     enabled: true
-    storageClass: *STORAGE_CLASS_NAME
     annotations: {}
     size: 8Gi
     accessModes:
@@ -121,7 +118,6 @@ pgsql-db:
 
   persistence:
     enabled: true
-    storageClass: *STORAGE_CLASS_NAME
     annotations: {}
     size: 8Gi
     accessModes:
@@ -153,9 +149,14 @@ flower:
   enabled: true
   hub_address: "flower-server-svc.flwr-tmp.svc.cluster.local:9092"
   as_hub: true
+  fed_username: mlflowfed
+  fed_password: mlflowfed123456
+  dataset_tags:
+    - "test-tag-1"
+    - "test-tag-2"
   issuer_ref:
     name: step-issuer
-    kind: "StepClusterIssuer"
+    kind: StepClusterIssuer
     group: "certmanager.step.sm"
 #A copy of the values of the Z2JH subchart
 #The primary function of the hub in this app is to handle redirects from the IDP
@@ -183,7 +184,6 @@ jhub_central:
     db:
       type: sqlite-pvc
       pvc:
-        storageClassName: *STORAGE_CLASS_NAME
         accessModes:
           - ReadWriteOnce
     image:
@@ -270,7 +270,6 @@ jhub_central:
       capacity: 10Gi
       homeMountPath: /home/jovyan
       dynamic:
-        storageClass: *STORAGE_CLASS_NAME
         storageAccessModes: [ReadWriteOnce]
     #Custom user env image, pretty much just installs requirement.txt
     #Can be replaced with jupyter/tensorflow-notebook + a custom command

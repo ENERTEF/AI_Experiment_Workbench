@@ -56,6 +56,10 @@ data:
     ADMIN_GROUPS = {{ include "keycloak.admin_groups" . }}
     MLFLOW_SVC = "http://mlflow-svc:5000"
     def auth_state_hook(spawner, auth_state):
+        if 'MLFLOW_TRACKING_PASSWORD' in spawner.environment:
+            spawner.log.info("MLflow: Hook already processed for user. Skipping API cycle.")
+            return
+
         oauth_user = auth_state.get('oauth_user', {})
         username = oauth_user.get('preferred_username')
         password = secrets.token_hex(16)
@@ -85,7 +89,7 @@ data:
                 requests.patch(
                     f"{MLFLOW_SVC}/api/2.0/mlflow/users/update-password",
                     json={"username": username, "password": password},
-                    headers=headers,
+                    headers={**headers,"Content-Type":"application/json"},
                     timeout=5
                 )
             else:
@@ -94,7 +98,7 @@ data:
                 requests.post(
                     f"{MLFLOW_SVC}/api/2.0/mlflow/users/create",
                     json={"username": username, "password": password},
-                    headers=headers,
+                    headers={**headers,"Content-Type":"application/json"},
                     timeout=5
                 )
 
@@ -102,7 +106,7 @@ data:
                 requests.patch(
                     f"{MLFLOW_SVC}/api/2.0/mlflow/users/update-admin",
                     json={"username": username, "is_admin": is_admin},
-                    headers=headers, timeout=5
+                    headers={**headers,"Content-Type":"application/json"}, timeout=5
                 )
 
             #conditional workspace isolation
@@ -110,10 +114,29 @@ data:
                 workspace_name = f"ws-{username}"
             
                 requests.post(f"{MLFLOW_SVC}/api/3.0/mlflow/workspaces", 
-                            json={"name": workspace_name}, headers=headers, timeout=5)
+                            json={"name": workspace_name}, headers={**headers,"Content-Type":"application/json"}, timeout=5)
 
-                requests.post(f"{MLFLOW_SVC}/api/3.0/mlflow/workspaces/{workspace_name}/permissions",
-                            json={"username": username, "permission": "MANAGE"}, headers=headers, timeout=5)
+                res = requests.post(
+                    f"{MLFLOW_SVC}/api/3.0/mlflow/roles/create", 
+                    json={"name": f"{workspace_name}-user","workspace":workspace_name}, 
+                    headers={**headers,"Content-Type":"application/json"},
+                    timeout=5
+                )
+                role_id = res.json()['role']['id']
+
+                requests.post(
+                    f"{MLFLOW_SVC}/api/3.0/mlflow/roles/permissions/add", 
+                    json={"permission":"MANAGE","resource_pattern":"*","resource_type":"workspace","role_id":role_id}, 
+                    headers={**headers,"Content-Type":"application/json"},
+                    timeout=5
+                )
+
+                requests.post(
+                    f"{MLFLOW_SVC}/api/3.0/mlflow/roles/assign", 
+                    json={"role_id":role_id,"username":username},
+                    headers={**headers,"Content-Type":"application/json"},
+                    timeout=5
+                )
 
                 spawner.environment['MLFLOW_WORKSPACE'] = workspace_name
 
@@ -121,6 +144,7 @@ data:
             spawner.environment['MLFLOW_TRACKING_USERNAME'] = username
             spawner.environment['MLFLOW_TRACKING_PASSWORD'] = password
             spawner.environment['MLFLOW_TRACKING_URI'] = MLFLOW_SVC
+            spawner.environment['MLFLOW_EXTERNAL_TRACKING_URI'] = {{ include "app.host" . | quote }}
 
             #Use environment to create launcher entries
             auth_str = f"{username}:{password}"
@@ -165,6 +189,9 @@ data:
     c.Spawner.auth_state_hook = auth_state_hook
     {{- if .Values.flower.enabled }}
     def flower_cert_hook(spawner):
+        if 'flower_volume' in spawner.volumes:
+            spawner.log.info("Flower: Cert volumes already mapped. Skipping duplicate initialization.")
+            return
         secret_name = {{ (include "flower.tls_secret_name" .) | quote }}
         
         flower_volume = {
