@@ -114,13 +114,10 @@ as_hub: true
 fed_username: mlflowfed
 fed_password: mlflowfed123456
 ```
-Certification is used for Flower node/server access controle through client certificates.<br>
-This is preliminary until the app is changed to use Flower authentication.<br>
+Ip whitelisting is the primary mechanism by which the control api endpoint of the hub is protected.<br>
+Although the fleet api endpoint is also protected with the same rule, the deployment provisions key pairs to the supernodes.<br>
 ```
-issuer_ref:
-  name: step-issuer
-  kind: StepClusterIssuer
-  group: "certmanager.step.sm"
+ip_whitelist: []
 ```
 The dataset_tags block is preliminary. It represents a rule for when a node picks up a job.<br>
 In this case, nodes broadcast tags of their datasets. When a job reaches the server,
@@ -165,7 +162,7 @@ The serverapp then uses that to log into both mlflow tracking servers, allowing 
 ![Exterior-architecture](docs/images/extarch.png)
 
 Centralized and remote logging is only possible from the serverapp, because the client app can run in any arbitrary supernode ( other client ), making the superlink the center point of the setup.<br>
-An app deployed as hub will generate certificates, these should be passed to apps deployed as nodes/clients, that they may reach the superlink.
+An app deployed as hub has an ip_whitelist, these should be populated and changed according to the expected supernodes.
 
 ### User environment structure
 
