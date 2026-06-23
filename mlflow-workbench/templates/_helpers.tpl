@@ -53,20 +53,20 @@ Placu no Horderu
 {{- printf "%s/protocol/openid-connect/userinfo" (include "keycloak.realm_url" .) -}}
 {{- end -}}
 
-{{- define "flower.hub_superlink" -}}
+{{- define "flower.server_url" -}}
 {{- if .Values.flower.as_hub -}}
-{{- printf "flower-server-svc:9092" -}}
+{{- .Values.expose.hostname -}}
 {{- else -}}
-{{- .Values.flower.hub_address -}}
+{{- .Values.flower.hub_domain -}}
 {{- end -}}
 {{- end -}}
 
-{{- define "flower.tls_secret_name" -}}
-  {{- if .Values.flower.as_hub -}}
-    flower-server-tls
-  {{- else -}}
-    flower-client-tls
-  {{- end -}}
+{{- define "flower.hub_superlink" -}}
+{{- printf "flwr-sv.%s:443" (include "flower.server_url" .) -}}
+{{- end -}}
+
+{{- define "flower.hub_control" -}}
+{{- printf "flwr-ctrl.%s:443" (include "flower.server_url" .) -}}
 {{- end -}}
 
 {{- define "federated.workspace_name" -}}

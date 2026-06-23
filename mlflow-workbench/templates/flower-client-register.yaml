@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flower-client-register
+  namespace: {{ .Release.Namespace }}
+data:
+  config.toml: |
+    [superlink]
+    default = "remote"
+
+    [superlink.remote]
+    address = {{ include "flower.hub_control" . | quote }}
+    root-certificates="/etc/ssl/certs/ca-certificates.crt"
+  register.py: |
+    import os
+    import secrets
+    import subprocess
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+    private_key = ec.generate_private_key(ec.SECP384R1())
+    print({{ include "flower.hub_control" . | quote }})
+    private_bytes = private_key.private_bytes(
+      encoding=serialization.Encoding.PEM,
+      format=serialization.PrivateFormat.OpenSSH,
+      encryption_algorithm=serialization.NoEncryption(),
+    )
+
+    public_bytes = private_key.public_key().public_bytes(
+      encoding=serialization.Encoding.OpenSSH,
+      format=serialization.PublicFormat.OpenSSH,
+    )
+
+    private_pem_str = private_bytes.decode("utf-8")
+    public_ssh_str = public_bytes.decode("utf-8")
+    pub_path = "/auth/node_key.pub"
+    
+    with open(pub_path, "wb") as f:
+      f.write(public_bytes)
+  
+    with open("/auth/node_key", "wb") as f:
+      f.write(private_bytes)
+
+    try:
+      cmd = [
+        "flwr", "supernode", "register",
+        pub_path,
+      ]
+        
+      result = subprocess.run(cmd, capture_output=True)
+      print(result.stdout.decode("utf-8"))
+      if result.returncode != 0:
+        print(result.stderr.decode("utf-8"))
+        raise
+    except subprocess.CalledProcessError as e:
+      print(f"App register Error: ", e.stderr)
+      raise
+

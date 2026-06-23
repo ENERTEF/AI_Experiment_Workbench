@@ -189,30 +189,6 @@ data:
     c.Spawner.auth_state_hook = auth_state_hook
     {{- if .Values.flower.enabled }}
     def flower_cert_hook(spawner):
-        if 'flower_volume' in spawner.volumes:
-            spawner.log.info("Flower: Cert volumes already mapped. Skipping duplicate initialization.")
-            return
-        secret_name = {{ (include "flower.tls_secret_name" .) | quote }}
-        
-        flower_volume = {
-            'name': 'flower-certs',
-            'secret': {
-                'secretName': secret_name,
-                'items': [{
-                    'key': 'ca.crt',
-                    'path': 'ca.crt'
-                }]
-            }
-        }
-        
-        flower_mount = {
-            'name': 'flower-certs',
-            'mountPath': '/app/certs',
-            'readOnly': True
-        }
-
-        spawner.volumes['flower_volume'] = flower_volume
-        spawner.volume_mounts['flower_mount'] = flower_mount
         #For some reason, Tensorboard is very chatty within flwr commands
         spawner.environment['TF_CPP_MIN_LOG_LEVEL'] = '3'
     

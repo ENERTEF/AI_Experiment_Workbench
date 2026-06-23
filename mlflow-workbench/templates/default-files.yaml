@@ -42,8 +42,7 @@ data:
     default = "k8s"
 
     [tool.flwr.federations.k8s]
-    address = {{ replace "9092" "9093" (include "flower.hub_superlink" .) | quote }}
-    root-certificates="/app/certs/ca.crt"
+    address = {{  (include "flower.hub_control" .) | quote }}
   .gitignore: |
     .config
     .flwr

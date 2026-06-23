@@ -41,7 +41,7 @@ auth:
   insecure_skip_verify: true
   external:
     enabled: false
-    realm_url: "https://tef-dso-keycloak.k8s.eonerc.rwth-aachen.de/realms/tef-dso"
+    realm_url: ""
     #The groups claim, changing this may require re-configuring the keycloak
     #Client scope to account for the nesting of claims
     groups_key: "oauth_user.roles"
@@ -80,7 +80,7 @@ expose:
     #cert-manager.io/cluster-issuer: letsencrypt-prod
   }
   #tls/ingress hostname
-  hostname: "mlfw.k3s.osc.eonerc.rwth-aachen.de"
+  hostname: ""
 
 #A copy of the values of the cloudpirates minio subchart
 minio-obj-storage:
@@ -146,18 +146,15 @@ mlflow:
 #Mainly to specify who is hub and who is client
 #TODO: Support remote (possibly Ray tune) or deployed cluster for task scheduling
 flower:
+  ip_whitelist: []
   enabled: true
-  hub_address: "flower-server-svc.flwr-tmp.svc.cluster.local:9092"
+  hub_domain: ""
   as_hub: true
   fed_username: mlflowfed
   fed_password: mlflowfed123456
   dataset_tags:
     - "test-tag-1"
     - "test-tag-2"
-  issuer_ref:
-    name: step-issuer
-    kind: StepClusterIssuer
-    group: "certmanager.step.sm"
 #A copy of the values of the Z2JH subchart
 #The primary function of the hub in this app is to handle redirects from the IDP
 #To create an mlflow account depending on group, create the notebook and activate 

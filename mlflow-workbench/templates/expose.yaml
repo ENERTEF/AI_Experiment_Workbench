@@ -12,7 +12,8 @@ metadata:
 spec:
   ingressClassName: {{ .Values.expose.ingress.className }}
   tls:
-    - hosts: [{{ .Values.expose.hostname | quote }}]
+    - hosts:
+      - {{ .Values.expose.hostname | quote }}
       secretName: {{ printf "%s-tls" .Release.Name }}
   rules:
     - host: {{ .Values.expose.hostname | quote }}
@@ -43,15 +44,24 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: jhub-flower-ingress
+  name: flower-ingress
   namespace: {{ .Release.Namespace }}
+  annotations:
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ join "," .Values.flower.ip_whitelist | quote }}
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: GRPCS
+  {{- if .Values.expose.annotations }}
+    {{- .Values.expose.annotations | toYaml | nindent 4 }}
+  {{- end }}
 spec:
   ingressClassName: {{ .Values.expose.ingress.className }}
   tls:
-    - hosts: [{{ printf "flower-server.%s" .Values.expose.hostname | quote }}]
-      secretName: flower-server-tls
+    - secretName: flower-server-tls
+      hosts:
+        - {{ printf "flwr-sv.%s" .Values.expose.hostname | quote }}
+        - {{ printf "flwr-ctrl.%s" .Values.expose.hostname | quote }}
   rules:
-    - host: {{ printf "flower-server.%s" .Values.expose.hostname | quote }}
+    - host: {{ printf "flwr-sv.%s" .Values.expose.hostname | quote }}
       http:
         paths:
           - path: /
@@ -60,19 +70,7 @@ spec:
               service:
                 name: flower-server-svc
                 port: { number: 9092 }
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: jhub-flower-ingress-ctrl
-  namespace: {{ .Release.Namespace }}
-spec:
-  ingressClassName: {{ .Values.expose.ingress.className }}
-  tls:
-    - hosts: [{{ printf "flower-server-ctrl.%s" .Values.expose.hostname | quote }}]
-      secretName: flower-server-tls
-  rules:
-    - host: {{ printf "flower-server-ctrl.%s" .Values.expose.hostname | quote }}
+    - host: {{ printf "flwr-ctrl.%s" .Values.expose.hostname | quote }}
       http:
         paths:
           - path: /
@@ -82,6 +80,7 @@ spec:
                 name: flower-server-svc
                 port: { number: 9093 }
 {{- end }}
+
 {{- else if eq .Values.expose.type "gateway" }}
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -136,3 +135,4 @@ spec:
   {{- fail "Unrecognized expose type, should be one of ingress or gateway" -}}
 {{- end }}
 {{- end }}
+

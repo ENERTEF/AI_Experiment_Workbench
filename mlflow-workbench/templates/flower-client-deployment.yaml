@@ -17,15 +17,37 @@ spec:
         app: flower-client
     spec:
       volumes:
-        - name: certs-vol
-          secret:
-            secretName: {{ (include "flower.tls_secret_name" .) }}
-            items:
-              - key: ca.crt
-                path: "ca.crt"
+        - name: keys-shared
+          emptyDir: {}
+        - name: client-register-vol
+          configMap:
+            name: flower-client-register
+      initContainers:
+        - name: register-node
+          image: python:3.11-slim
+          volumeMounts:
+            - name: keys-shared
+              mountPath: /auth
+            - name: client-register-vol
+              mountPath: /scripts/register.py
+              subPath: register.py
+            - name: client-register-vol
+              mountPath: /root/.flwr/config.toml 
+              subPath: config.toml
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              sleep 60
+              pip install --no-cache-dir cryptography flwr
+              set -e
+              python /scripts/register.py
+              ls /auth
       containers:
         - name: supernode
           image: flwr/supernode:latest
+          volumeMounts:
+            - name: keys-shared
+              mountPath: /auth
           env:
             - name: FLWR_LOG_LEVEL
               value: INFO
@@ -37,13 +59,11 @@ spec:
             - "--superlink"
             - {{ printf "%s" (include "flower.hub_superlink" .) | quote }}
             - "--root-certificates"
-            - "/app/certs/ca.crt"
+            - "/etc/ssl/certs/ca-certificates.crt"
             - "--node-config"
             - {{ printf "dataset_tags=\"%s\"" (join "," .Values.flower.dataset_tags) | quote }}
-          volumeMounts:
-            - name: certs-vol
-              mountPath: /app/certs
-              readOnly: true
+            - "--auth-supernode-private-key"
+            - "/auth/node_key"
         - name: superexec
           image: soullessblob/flower-client:latest
           env:

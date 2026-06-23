@@ -20,6 +20,9 @@ spec:
         - name: certs-vol
           secret:
             secretName: flower-server-tls
+        - name: nginx-config-vol
+          configMap:
+            name: flower-control-nginx-conf
       containers:
         - name: superlink
           image: flwr/superlink:latest
@@ -27,6 +30,7 @@ spec:
             - name: FLWR_LOG_LEVEL
               value: INFO
           args: 
+            - "--enable-supernode-auth"
             - "--isolation"
             - "process"
             - "--serverappio-api-address"
@@ -34,7 +38,7 @@ spec:
             - "--fleet-api-address"
             - "0.0.0.0:9092"
             - "--ssl-ca-certfile"
-            - "/app/certs/ca.crt"
+            - "/etc/ssl/certs/ca-certificates.crt"
             - "--ssl-certfile"
             - "/app/certs/tls.crt"
             - "--ssl-keyfile"
