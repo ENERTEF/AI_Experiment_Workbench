@@ -1,0 +1,26 @@
+auth:
+  #step certification not verifiable
+  insecure_skip_verify: true
+
+expose:
+  ingress:
+    classname: nginx
+  type: "ingress"
+  annotations: {
+    cert-manager.io/issuer: step-issuer,
+    cert-manager.io/issuer-kind: "StepClusterIssuer",
+    cert-manager.io/issuer-group: "certmanager.step.sm"
+  }
+  hostname: "host.mydomain"
+
+flower:
+  client:
+    sidecar:
+      enabled: true
+    supernode:
+      enabled: true
+      caps_file: "" #set with --set-file better
+    superlink_addr: "host.another.domain"
+    superlink_cert: "" #set with --set-file better
+  superlink:
+    enabled: false

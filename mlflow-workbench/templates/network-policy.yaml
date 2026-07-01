@@ -1,0 +1,28 @@
+{{- if and .Values.flower.superlink.enabled .Values.flower.superlink.ip_whitelist ( eq .Values.expose.type "gateway" ) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flower-ingress-policy
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: flower-superlink
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: {{ .Values.expose.gateway.default_gateway.namespace | quote }}
+      {{- range .Values.flower.superlink.ip_whitelist }}
+      - ipBlock:
+          cidr: {{ . | quote }}
+      {{- end }}
+      ports:
+        - protocol: TCP
+          port: 9092
+        - protocol: TCP
+          port: 9093
+{{- end }}

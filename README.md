@@ -45,7 +45,7 @@ Postgres and Minio are there to be used by Mlflow. Only persistence and authenti
 The chart relies on Keycloak to manage Mlflow workspaces belonging to different users. Admin users have access to all workspaces, standard users have access to only their workspace.<br>
 The mediator between Keycloak and Mlflow is Jupyterhub. It takes the user identity after successfull authentication, and creates Mlflow credentials at the container creation stage.<br>
 
-If auth.external.enabled is false , the app deploys its own Keycloak using whats in the values block.<br>
+If auth.external.enabled is false with a default realm and app client.<br>
 The Keycloak deployed by the app comes preconfigured with one admin and one standard user.<br>
 Use the Keycloak admin credentials to create other users:
 ```
@@ -58,8 +58,10 @@ The group_key is the OIDC attribute that dictates the user role in the Workbench
 The allowed and admin groups are the exact mapping to standard and admin users respectively.<br>
 ```
 external:
-  enabled: false
-  realm_url: "https://tef-dso-Keycloak.k8s.eonerc.rwth-aachen.de/realms/tef-dso"
+  enabled: true
+  realm_url: ""
+  client_id: ""
+  client_secret: ""
   groups_key: "oauth_user.roles"
   allowed_groups:
     - mlfw-user
@@ -70,12 +72,7 @@ external:
 The client_id and client_secret are used for authentication between jupyterhub and Keycloak.<br>
 Obtained by configuring a client app in Keycloak.<br>
 
-```
-client_id: "jhub-mlfw"
-client_secret: ""
-```
-
-Skipping TLS verification is only useful in a local setup.<br> 
+Skipping TLS verification is only useful in a setup with custom certification.<br> 
 
 ```
 insecure_skip_verify: true
@@ -87,6 +84,11 @@ Access to the platform is configurable through Ingress and Gatways API.<br>
 Reference your certificate issuer in the annotations to use TLS.<br>
 ```
 annotations: {}
+```
+Alternatively provide own custom tls secret.<br>
+```
+tls:
+  secretname: ""
 ```
 
 If using Gateways, a gateway is assumed to exist.<br>
@@ -102,32 +104,33 @@ with the gateways API.<br>
 
 ### Flower
 Flower is an optional service here. Disable with corresponding flag if needed.<br>
+It is split into 3 different services: The jupyterhub user env sidecar, the supernode and the superlink.<br>
+If supernode or sidecar is enabled, and superlink is not enabled or superlink_cert doesnt exist, the supernode/sidecar has as fallback the usual default ca bundle.
+The superlink_addr is required if superlink is disabled but either sidecar or supernode is enabled.<br>
 ```
-enabled: false
+superlink_addr: ""
+superlink_cert: ""
 ```
 
-Applications are aware of a single Flower hub, that will receive tasks containing projects, and query other nodes about availability to run them.<br>
-If running as hub, the fed Mlflow credentials are used by the hub Flower instance to log all federated learning operations into its Mlflow sidecar.<br>
-
+If using a certification operator, that doesnt write its ca.crt inside the secret, then set
+superlink.use_default_ca to true or use a custom tls secretname.<br>
 ```
-as_hub: true
-fed_username: mlflowfed
-fed_password: mlflowfed123456
+use_default_ca: true
 ```
-Ip whitelisting is the primary mechanism by which the control api endpoint of the hub is protected.<br>
-Although the fleet api endpoint is also protected with the same rule, the deployment provisions key pairs to the supernodes.<br>
+IP whitelisting is the primary mechanism to restrict access to the superlink control endpoint, as flower has not implemented auth for the control api.<br>
 ```
 ip_whitelist: []
 ```
-The dataset_tags block is preliminary. It represents a rule for when a node picks up a job.<br>
-In this case, nodes broadcast tags of their datasets. When a job reaches the server,
-which requires one of those datasets, its clientapp gets routed to the node.<br>
-
+**IMPORTANT**: The gateways ip_whitelist usecase has not been tested yet.<br>
+the fed credentials:
 ```
-dataset_tags:
-  - "test-tag-1"
-  - "test-tag-2"
+fed_username: mlflowfed
+fed_password: mlflowfed123456
 ```
+Are used by supernodes to access dataset sources stored in mlflow, and by superlink server
+to achieve centralized logging and federated learning.<br>
+It is advised to use the helm --set-file flag to provide the superlink_cert or the caps_file.<br>
+For supernode.caps_file, see usage below.<br>
 
 ### Jupyterhub
 
@@ -155,15 +158,13 @@ If flower is enabled, the flower architecture becomes relevant:
 ![Flower-architecture](docs/images/flower-architecture.svg)
 [source](https://flower.ai)
 
-The serverapp always ends up in the server, i.e, the superexec belonging to the superlink.<br> 
+The serverapp always ends up in the server, i.e, the superexec belonging to the superlink.<br>
 This allows to provisiong both the local admin mlflow credentials on the hub instance, and the remote , user specific mlflow credentials for the client instance.<br>
 The serverapp then uses that to log into both mlflow tracking servers, allowing for proper namespaced and selective model sharing:
 
 ![Exterior-architecture](docs/images/extarch.png)
 
 Centralized and remote logging is only possible from the serverapp, because the client app can run in any arbitrary supernode ( other client ), making the superlink the center point of the setup.<br>
-An app deployed as hub has an ip_whitelist, these should be populated and changed according to the expected supernodes.
-
 ### User environment structure
 
 Each user gets a dedicated Kubernetes pod with a preconfigured environment that includes<br>
@@ -181,20 +182,43 @@ Custom NetworkPolicies can be added in the jhub-central values block.<br>
 2. Access pre-installed libraries and scripts in the `/notebook-scripts/` directory
 
 The user can rely on the predefined example notebooks or also create any python or notebook file they want.<br>
-If flower is enabled, the project can be configured in the provided pyproject.toml, extra dependencies can be added,
-and code needs to be restricted to client.py and server.py.<br>
-This is preliminary, the ultimate goal is to wrap much simpler user defined functions in a Flower project template.<br>
-For now the user can open the terminal extension and run
+If flower is enabled, the a flwr cli sidecar container is deployed along side the main user container.<br>
+The flower commands are proxied through the binary z2jh_flwr
 ```
-flwr run . --stream
+z2jh_flwr run --stream
+```
+The environment is preconfigured, but the cli proxy expects a rigid structure.<br>
+1. The user project has to be inside /home/jovyan/user.
+2. The command only runs from /home/jovyan/user, even if it is to only list or log runs.
+3. The project has to contain an "exports.py" file that contains a train and an evaluate function, a DEPENDENCIES array, and a CAPABILITIES string:string dictionary. ( look at the default exports.py in the provided default files for more info )
+
+CAPABILITIES is used to filter supernodes according to the user's needs.<br>
+This is the caps.py file that corresponds to flower.client.supernode.caps_file, it should look like this:
+```python
+import psutil
+
+def CAPABILITIES():
+  return {
+    "cpu":psutil.cpu_percent(),
+    "ram":psutil.virtual_memory().available/(1024**3),
+    "dataset":["wine-quality"] #should be replaced with runtime mlflow fed_exp dataset check
+  }
 ```
 
-they can also configure the sought after datasets in the pyproject.toml:
+The user can then define a dict in their exports.py:
+```python
+CAPABILITIES = {
+    "dataset":"has$wine-quality",
+    "cpu":"lt$20", #in percent
+    "ram":"gt$3.5" #in Gb for example
+}
 
 ```
-[tool.flwr.app.config]
-dataset_tags="test-tag-1"
-```
+
+And the server will query all registered nodes, which will return their capabilities dynamically.<br> 
+The query system supports entirely arbitrary keys and values, so make sure whatever the user is asking for, exists, otherwise no supernode will be scheduled, and the project run aborted.<br>
+**IMPORTANT**: The constraints work on an all or nothing basis, the only accepted nodes are the ones that fulfill all requirements (for now).<br> 
+
 
 ## Summary
 

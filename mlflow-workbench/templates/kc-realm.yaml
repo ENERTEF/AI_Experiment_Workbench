@@ -6,12 +6,14 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   mlflow-workbench-realm.json: |
+    {{ $cid := include "keycloak.client_id" . -}}
+    {{ include "generate_client_secret" .}}
     {
       "realm": "mlflow-workbench",
       "enabled": true,
       "roles": {
         "client": {
-          {{ .Values.auth.client_id | quote }}: [
+          {{ $cid | quote }}: [
             { "name": "mlflow-admin" },
             { "name": "mlflow-user" }
           ]
@@ -25,7 +27,7 @@ data:
           "enabled": true,
           "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
           "clientRoles": {
-            {{ .Values.auth.client_id | quote }}: ["mlflow-admin"]
+            {{ $cid | quote }}: ["mlflow-admin"]
           }
         },
         {
@@ -35,17 +37,17 @@ data:
           "enabled": true,
           "credentials": [{ "type": "password", "value": "user123", "temporary": false }],
           "clientRoles": {
-            {{ .Values.auth.client_id | quote }}: ["mlflow-user"]
+            {{ $cid | quote }}: ["mlflow-user"]
           }
         }
       ],
       "clients": [
         {
-          "clientId": {{ .Values.auth.client_id | quote }},
+          "clientId": {{ $cid | quote }},
           "enabled": true,
           "protocol": "openid-connect",
           "publicClient": false,
-          "secret": {{ .Values.auth.client_secret | quote }},
+          "secret": {{ get .Release "client_secret" | quote }},
           "redirectUris": [ {{ printf "%s/*" (include "app.host" .) | quote }} ],
           "defaultClientScopes": [ "oidc", "roles", "profile", "email" ],
           "protocolMappers": [
@@ -61,7 +63,7 @@ data:
                 "claim.name": "roles",
                 "usages.realm.role.mapping": "false",
                 "usages.client.role.mapping": "true",
-                "client.id": {{ .Values.auth.client_id | quote }}
+                "client.id": {{ $cid | quote }}
               }
             }
           ]

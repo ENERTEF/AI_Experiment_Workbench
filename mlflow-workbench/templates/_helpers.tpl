@@ -1,11 +1,42 @@
-{{/*
-Placu no Horderu
-*/}}
+{{- if .Values.flower.superlink.enabled -}}
+{{- if empty .Values.expose.hostname -}}
+{{- fail "flower.superlink.enabled=true requires expose.hostname to be set" -}}
+{{- end -}}
+{{- if eq .Values.expose.type "gateway" -}}
+{{- if empty .Values.expose.gateway.default_gateway.name -}}
+{{- fail "flower.superlink.enabled=true with gateway requires expose.gateway.default_gateway.name" -}}
+{{- end -}}
+{{- if empty .Values.expose.gateway.default_gateway.https_passthrough_listener -}}
+{{- fail "flower.superlink.enabled=true with gateway requires https_passthrough_listener" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "app.host" -}}
-{{- if .Values.expose.enabled -}}
 {{- printf "https://%s" .Values.expose.hostname -}}
+{{- end -}}
+
+
+{{- define "keycloak.client_secret" -}}
+{{- if .Values.auth.external.enabled -}}
+{{- .Values.auth.external.client_secret -}}
 {{- else -}}
-{{- printf "https://localhost" -}}
+{{- randAlphaNum 32 -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "generate_client_secret" -}}
+{{- $key := "client_secret" -}}
+{{- if not (index .Release "client_secret") -}}
+{{- $_ := set .Release $key (include "keycloak.client_secret" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "keycloak.client_id" -}}
+{{- if .Values.auth.external.enabled -}}
+{{- .Values.auth.external.client_id -}}
+{{- else -}}
+jhub-mlfw
 {{- end -}}
 {{- end -}}
 
@@ -53,20 +84,58 @@ Placu no Horderu
 {{- printf "%s/protocol/openid-connect/userinfo" (include "keycloak.realm_url" .) -}}
 {{- end -}}
 
-{{- define "flower.server_url" -}}
-{{- if .Values.flower.as_hub -}}
+{{- define "flower.superlink_domain" -}}
+{{- if .Values.flower.superlink.enabled -}}
 {{- .Values.expose.hostname -}}
 {{- else -}}
-{{- .Values.flower.hub_domain -}}
+{{- .Values.flower.client.superlink_addr -}}
 {{- end -}}
 {{- end -}}
 
-{{- define "flower.hub_superlink" -}}
-{{- printf "flwr-sv.%s:443" (include "flower.server_url" .) -}}
+{{- define "flower.superlink_fleet" -}}
+{{- printf "flwr-sv.%s:443" (include "flower.superlink_domain" .) -}}
 {{- end -}}
 
-{{- define "flower.hub_control" -}}
-{{- printf "flwr-ctrl.%s:443" (include "flower.server_url" .) -}}
+{{- define "flower.superlink_control" -}}
+{{- printf "flwr-ctrl.%s:443" (include "flower.superlink_domain" .) -}}
+{{- end -}}
+
+{{- define "flower.tls_secretname" -}}
+{{ default "flower-superlink-tls" .Values.expose.tls.secretname }}
+{{- end -}}
+
+{{- define "flower.use_default_ca" -}}
+{{- if or ( and .Values.flower.superlink.enabled ( not .Values.flower.superlink.use_default_ca ) ) ( not ( empty .Values.flower.client.superlink_cert ) ) -}}
+false
+{{- else -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{- define "flower.ca_path" -}}
+{{- if eq (include "flower.use_default_ca" .) "true" -}}
+/etc/ssl/certs/ca-certificates.crt
+{{- else -}}
+/app/ca.crt
+{{- end -}}
+{{- end -}}
+
+{{- define "flower.ca_secretname" -}}
+{{- if .Values.flower.superlink.enabled -}}
+{{- include "flower.tls_secretname" . -}}
+{{- else if .Values.flower.client.superlink_cert -}}
+flower-root-cert
+{{- else -}}
+{{- printf "" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "flower.caps" -}}
+{{- if and  .Values.flower.client.supernode.enabled (not (empty .Values.flower.client.supernode.caps_file)) -}}
+true
+{{- else -}}
+false
+{{- end -}}
 {{- end -}}
 
 {{- define "federated.workspace_name" -}}

@@ -1,4 +1,4 @@
-{{- if .Values.flower.enabled }}
+{{- if or .Values.flower.superlink.enabled .Values.flower.client.supernode.enabled }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -17,17 +17,23 @@ spec:
           image: python:3.11-slim
           env:
             - name: FED_USER
-              value: {{ .Values.flower.fed_username | quote }}
+              value: {{ .Values.flower.superlink.fed_username | quote }}
             - name: FED_PASS
-              value: {{ .Values.flower.fed_password | quote }}
+              value: {{ .Values.flower.superlink.fed_password | quote }}
             - name: FED_EXP_NAME
               value: {{ include "federated.experiment_name" . }}
             - name: FED_WS_NAME
               value: {{ include "federated.workspace_name" . }}
             - name: MLFLOW_ADMIN_USER
-              value: {{ .Values.mlflow.mlflow_admin_username | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: credentials
+                  key: mlflow-admin-username
             - name: MLFLOW_ADMIN_PASS
-              value: {{ .Values.mlflow.mlflow_admin_password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: credentials
+                  key: mlflow-admin-password
           command: ["/bin/sh", "-c"]
           args:
             - |

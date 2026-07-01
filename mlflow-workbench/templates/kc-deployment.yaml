@@ -20,9 +20,15 @@ spec:
         args: ["start-dev", "--import-realm"]
         env:
         - name: KEYCLOAK_ADMIN
-          value: {{ .Values.auth.kc_admin | default "admin" | quote }}
+          valueFrom:
+            secretKeyRef:
+              name: credentials
+              key: keycloak-admin-username
         - name: KEYCLOAK_ADMIN_PASSWORD
-          value: {{ .Values.auth.kc_admin_pass | default "admin" | quote }}
+          valueFrom:
+            secretKeyRef:
+              name: credentials
+              key: keycloak-admin-password
         - name: KC_HTTP_RELATIVE_PATH
           value: "/auth"
         - name: KC_HOSTNAME_PATH

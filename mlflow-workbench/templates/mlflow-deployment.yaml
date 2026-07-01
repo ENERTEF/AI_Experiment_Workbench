@@ -17,14 +17,15 @@ spec:
     spec:
       volumes:
         - name: auth-config
-          configMap:
-            name: mlflow-auth-config
+          secret:
+            secretName: mlflow-auth-config
       containers:
       - name: mlflow-container
         image: ghcr.io/mlflow/mlflow:latest
         volumeMounts:
           - name: auth-config
             mountPath: /app/config/auth.ini
+            readOnly: true
             subPath: auth.ini
         env:
           - name: MLFLOW_FLASK_SERVER_SECRET_KEY
@@ -36,17 +37,22 @@ spec:
           - name: MLFLOW_S3_ENDPOINT_URL
             value: {{ printf "http://%s-minio-obj-storage:%d" .Release.Name (int .Values.mlflow.minio_port) | quote }}
           - name:	MLFLOW_SERVER_ALLOWED_HOSTS
-            {{ if .Values.expose.enabled }}
             value: {{ printf "localhost:5000,mlflow-svc:5000,%s" .Values.expose.hostname }}
-            {{ else }}
-            value: "localhost:5000,mlflow-svc:5000"
-            {{ end }}
           - name: AWS_ACCESS_KEY_ID
-            value: {{ .Values.mlflow.minio_user | quote }}
+            valueFrom:
+              secretKeyRef:
+                name: credentials
+                key: minio-user
           - name: AWS_SECRET_ACCESS_KEY
-            value: {{ .Values.mlflow.minio_password | quote }}
+            valueFrom:
+              secretKeyRef:
+                name: credentials
+                key: minio-password
           - name: POSTGRES_URI
-            value: {{printf "postgresql://%s:%s@%s-pgsql-db:%d/%s" .Values.mlflow.postgres_user .Values.mlflow.postgres_password .Release.Name (int .Values.mlflow.postgres_port) .Values.mlflow.postgres_database}}
+            valueFrom:
+              secretKeyRef:
+                name: credentials
+                key: postgres-uri
         command: ["/bin/bash","-c"]
         args:
           - |
@@ -55,11 +61,7 @@ spec:
               --app-name basic-auth \
               --host 0.0.0.0 \
               --port 5000 \
-              {{- if .Values.expose.enabled }}
               --cors-allowed-origins "https://{{ .Values.expose.hostname }}" \
-              {{- else }}
-              --cors-allowed-origins http://localhost \
-              {{- end }}
               --serve-artifacts \
               --enable-workspaces \
               --backend-store-uri $POSTGRES_URI \

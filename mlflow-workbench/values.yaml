@@ -25,12 +25,6 @@ shared_values:
 #Each standard user gets their own mlflow workspace
 #Admins have access to all workspaces in the mlflow tracking server
 auth:
-  #These values have different meanings, depending on whether keycloak is external
-  #If keycloak is managed by this chart, then these values will be used to generate
-  #The client for this app. If keycloak is external, then it is assumed that the client
-  #For this app is configured with these values
-  client_id: "jhub-mlfw"
-  client_secret: ""
   #Keycloak bootstrapping credentials for generating a master realm + admin user
   kc_admin: "admin"
   kc_admin_pass: "admin"
@@ -38,17 +32,15 @@ auth:
   #By the hub anyway, this field deactivates tls verification between the hub and Keycloak
   #Temporary, Until further considerations can be made to instruct the hub to recognize
   #Certain certs, maybe passed by CM name and namespace
-  insecure_skip_verify: true
+  insecure_skip_verify: false
   external:
     enabled: false
     realm_url: ""
-    #The groups claim, changing this may require re-configuring the keycloak
-    #Client scope to account for the nesting of claims
+    client_id: ""
+    client_secret: ""
     groups_key: "oauth_user.roles"
-    #Standard user groups
     allowed_groups:
       - mlfw-user
-    #Admin user groups
     admin_groups:
       - mlfw-admin
 
@@ -56,7 +48,6 @@ auth:
 #Ingress or Gateways. This is due to the current transition to the Gateways API
 #In all implementations that used to support ingress
 expose:
-  enabled: true
   gateway:
     #A gateway with a proper https listener is assumed to exist
     #Any exposition will fail silently if it doesnt in the case where type=gateway
@@ -64,15 +55,19 @@ expose:
       name: eg
       namespace: envoy-gateway-system
       #The listener reference, this is used to create the HTTPRoute resource
-      https_listener: https
+      https_terminate_listener: https
+      https_passthrough_listener: tls
+
   ingress:
-    className: nginx
-  #One of ingress or gateway
+    classname: nginx
+  #will be used for flower superlink tls as well
+  tls:
+    secretname: ""
+  #One of ingress or gateway, if different , no expose
   type: "ingress"
   #Use these annotations to reference your certificate issuer
   #It is advised to always have a cert setup, even in a dev cluster, since everything
   #Is configured over https
-  #The jhub instance will conditionally disable tls verification, if expose.enabled=false
   annotations: {
     #cert-manager.io/issuer: step-issuer,
     #cert-manager.io/issuer-kind: "StepClusterIssuer",
@@ -106,6 +101,9 @@ minio-obj-storage:
 #A copy of the values of the cloudpirates postgres subchart
 pgsql-db:
   replicaCount: 1
+  config:
+    extraConfig:
+      - "huge_pages = off"
   auth:
     username: *POSTGRES_USER
     password: *POSTGRES_PASSWORD
@@ -146,27 +144,43 @@ mlflow:
 #Mainly to specify who is hub and who is client
 #TODO: Support remote (possibly Ray tune) or deployed cluster for task scheduling
 flower:
-  ip_whitelist: []
-  enabled: true
-  hub_domain: ""
-  as_hub: true
-  fed_username: mlflowfed
-  fed_password: mlflowfed123456
-  dataset_tags:
-    - "test-tag-1"
-    - "test-tag-2"
+  client:
+    #Inject flower cli sidecar into jupyter user env
+    sidecar:
+      enabled: false
+    #Participate in federated/distributed compute
+    supernode:
+      enabled: false
+      caps_file: ""
+    superlink_addr: ""
+    superlink_cert: ""
+  superlink:
+    #Deploy distributed compute server
+    fed_username: mlflowfed
+    fed_password: mlflowfed123456
+    use_default_ca: false
+    enabled: false
+    ip_whitelist: []
 #A copy of the values of the Z2JH subchart
 #The primary function of the hub in this app is to handle redirects from the IDP
 #To create an mlflow account depending on group, create the notebook and activate 
 #The mlflow UI and tensorboard extensions
 jhub_central:
+  scheduling:
+    userScheduler:
+      replicas: 1
+  prePuller:
+    hook:
+      enabled: false
+    continuous:
+      enabled: false
   hub:
     #These are the jupyterhub config templates
     extraVolumes:
       - name: jhub-extra-config
         configMap:
           name: jhub-extra-config
-    extraVolumeMounts:
+    extraVolumeMounts: 
       #This template is used to add the previously mentioned auth hooks
       - name: jhub-extra-config
         mountPath: /usr/local/etc/jupyterhub/jupyterhub_config.d/extra_config.py
@@ -191,92 +205,19 @@ jhub_central:
       type: ClusterIP
     secretToken: '4d514a528099e35c7c7fd48acf9c9454ae41705412966f4a730d6c2f688cf948'
   singleuser:
-    #Disallow any traffic towards anything BUT the user container itself, the hub 
-    #Or the mlflow tracking server
     networkPolicy:
       enabled: false
-      egress:
-        - to:
-          - podSelector:
-              matchLabels:
-                app: mlflow
-          ports:
-            - port: 5000
-              protocol: TCP
-    extraLabels:
-      hub.jupyter.org/network-access-hub: "true"
-    extraEnv:
-      MLFLOW_TRACKING_URI:
-        value: http://mlflow-svc:5000
-
-    #When putting a notebook in the notebook folder
-    #Helm then handles creating the corresponding CM
-    #This is subsequently copied in an initContainer due to permission shennanigans
-    initContainers:
-      - name: copy-defaults
-        image: alpine
-        securityContext:
-          runAsUser: 0
-          runAsGroup: 0
-        command:
-          - sh
-          - -c
-          - |
-            echo "Copying default files to user home directory..."
-            # Create home directory if it doesn't exist
-            mkdir -p /home/jovyan
-            if [ "$(ls -A /default-files)" ]; then
-              cp -rfL /default-files/* /home/jovyan/ || echo "Warning: Some files might not have been copied"
-              chown -R 1000:100 /home/jovyan/
-              echo "Done copying files."
-            else
-              echo "No default files found to copy."
-            fi
-        volumeMounts:
-          - name: default-files
-            mountPath: /default-files
-            readOnly: true
-          - name: volume-{username}-{servername}
-            mountPath: /home/jovyan
-    allowPrivilegeEscalation: false
-    uid: 1000
-    fsGid: 100
+    podNameTemplate: pod-{username}
     storage:
-      type: dynamic
-      extraVolumes:
-        - name: user-extra-config
-          configMap:
-            name: jhub-extra-config
-        - name: default-files
-          configMap:
-            name: default-files
-        - name: home
-          persistentVolumeClaim:
-            claimName: claim-{username}
-      extraVolumeMounts:
-        #This template is used by the user container
-        #To activate extensions from a payload
-        #Passed by the hub in its auth_hook through the spawner.environment
-        - name: user-extra-config
-          mountPath: /etc/jupyter/jupyter_server_config.py
-          subPath: jupyter_server_config.py
-          readOnly: true
-        - name: default-files
-          mountPath: /default-files
-          readOnly: false
-      capacity: 10Gi
-      homeMountPath: /home/jovyan
       dynamic:
         storageAccessModes: [ReadWriteOnce]
-    #Custom user env image, pretty much just installs requirement.txt
-    #Can be replaced with jupyter/tensorflow-notebook + a custom command
+        volumeNameTemplate: volume-{username}
+        pvcNameTemplate: claim-{username}
+      type: dynamic
+      capacity: 10Gi
+      homeMountPath: /home/jovyan
     image:
       name: soullessblob/tensorflow-notebook
-      tag: latest
+      tag: alpha
+      pullPolicy: Always
     defaultUrl: "/lab/tree/mlflow_tensorboard_examples.ipynb"
-  scheduling:
-    userScheduler:
-      enabled: true
-  cull:
-    enabled: true
-    timeout: 3600

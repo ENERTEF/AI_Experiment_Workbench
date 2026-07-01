@@ -1,0 +1,10 @@
+{{- if eq (include "flower.caps" .) "true" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flower-supernode-caps
+  namespace: {{ .Release.Namespace }}
+data:
+  capabilities.py: |
+    {{- .Values.flower.client.supernode.caps_file | nindent 4 }}
+{{- end }}

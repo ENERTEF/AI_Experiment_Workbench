@@ -36,8 +36,9 @@ data:
 
     #templated
     c.GenericOAuthenticator.auth_state_groups_key = {{ include "keycloak.groups_key" . | quote }}
-    c.GenericOAuthenticator.client_id = {{ .Values.auth.client_id | quote }}
-    c.GenericOAuthenticator.client_secret = {{ .Values.auth.client_secret | quote }}
+    c.GenericOAuthenticator.client_id = {{ include "keycloak.client_id" . | quote }}
+    {{ include "generate_client_secret" .}}
+    c.GenericOAuthenticator.client_secret = {{ get .Release "client_secret" | quote }}
     c.GenericOAuthenticator.authorize_url = {{ include "keycloak.authorize_url" . | quote }}
     c.GenericOAuthenticator.token_url = {{ include "keycloak.token_url" . | quote }}
     c.GenericOAuthenticator.userdata_url = {{ include "keycloak.userinfo_url" . | quote }}
@@ -55,19 +56,85 @@ data:
     GROUPS_KEY = {{ include "keycloak.groups_key" . | quote }}
     ADMIN_GROUPS = {{ include "keycloak.admin_groups" . }}
     MLFLOW_SVC = "http://mlflow-svc:5000"
+
     def auth_state_hook(spawner, auth_state):
         if 'MLFLOW_TRACKING_PASSWORD' in spawner.environment:
             spawner.log.info("MLflow: Hook already processed for user. Skipping API cycle.")
             return
-
+        
+        
         oauth_user = auth_state.get('oauth_user', {})
         username = oauth_user.get('preferred_username')
         password = secrets.token_hex(16)
-        try:
-            #increase timeout (x2)
-            spawner.http_timeout = 60 
-            spawner.start_timeout = 60
 
+        #increase timeout (x2)
+        spawner.http_timeout = 60 
+        spawner.start_timeout = 60
+        
+        
+        spawner.volumes["00-config"] = {
+            "name": "user-extra-config",
+            "configMap":{
+                "name": "jhub-extra-config"
+            },
+        }
+        
+        spawner.volumes["00-files"] = {
+            "name": "default-files",
+            "configMap":{
+                "name": "default-files"
+            },
+        }
+
+        spawner.volume_mounts["01-config"] = {
+            "name":"user-extra-config",
+            "mountPath":"/etc/jupyter/jupyter_server_config.py",
+            "subPath":"jupyter_server_config.py",
+            "readOnly":True
+        }
+        
+        spawner.init_containers = [{
+            "name":"copy-defaults",
+            "image":"alpine",
+            "securityContext":{
+                "runAsUser":0,
+                "runAsGroup":0
+            },
+            "volumeMounts":[
+                {
+                    "name":"default-files",
+                    "mountPath":"/default-files",
+                    "readOnly":True
+                },
+                {
+                    "name":f"volume-{username}",
+                    "mountPath":"/home/jovyan"
+                }
+            ],
+            "command":["sh","-c"],
+            "args":[
+                """
+                echo "Copying default files to user home directory..."
+
+                # Create home directory if it doesn't exist
+                mkdir -p /home/jovyan
+
+                if [ "$(ls -A /default-files 2>/dev/null)" ]; then
+                cp -rfL /default-files/* /home/jovyan/ || echo "Warning: Some files might not have been copied"
+                chown -R 1000:100 /home/jovyan/
+                echo "Done copying files."
+                else
+                echo "No default files found to copy."
+                fi
+                """
+            ]
+        }]
+        spawner.allow_privilege_escalation = False
+        spawner.uid = 1000
+        spawner.extra_labels["hub.jupyter.org/network-access-hub"] = "true"
+        spawner.fsGid = 100
+        
+        try:
             user_roles=auth_state
             #traverse auth_state for groups field
             for part in GROUPS_KEY.split('.'):
@@ -139,7 +206,7 @@ data:
                 )
 
                 spawner.environment['MLFLOW_WORKSPACE'] = workspace_name
-
+            
             #set auth env
             spawner.environment['MLFLOW_TRACKING_USERNAME'] = username
             spawner.environment['MLFLOW_TRACKING_PASSWORD'] = password
@@ -187,10 +254,99 @@ data:
 
     #set the auth hook
     c.Spawner.auth_state_hook = auth_state_hook
-    {{- if .Values.flower.enabled }}
-    def flower_cert_hook(spawner):
-        #For some reason, Tensorboard is very chatty within flwr commands
-        spawner.environment['TF_CPP_MIN_LOG_LEVEL'] = '3'
-    
-    c.Spawner.pre_spawn_hook = flower_cert_hook
+    {{- if .Values.flower.client.sidecar.enabled }}
+    def flower_hook(spawner):
+        if 'HAS_RAN' in spawner.environment:
+            spawner.log.info("Flower: Hook already processed for user. Skipping API cycle.")
+            return
+        spawner.environment["HAS_RAN"] = "true"
+        spawner.volumes["00-exports"] = {
+            "name":"exports-vol",
+            "emptyDir":{}
+        }
+
+        spawner.volumes["00-pipes"] = {
+            "name":"pipes-vol",
+            "emptyDir":{}
+        }
+        
+        {{- if eq (include "flower.use_default_ca" .) "false" }}
+        spawner.volumes["00-root-ca"] = {
+            "name": "root-ca-vol",
+            "secret":{
+                "secretName":{{ include "flower.ca_secretname" . | quote }}
+            }
+        }
+        {{- end }}
+
+        spawner.volume_mounts["01-exports"] = {
+            "name":"exports-vol",
+            "mountPath":"/home/jovyan/user"
+        }
+
+        spawner.volume_mounts["01-pipes"] = {
+            "name":"pipes-vol",
+            "mountPath":"/home/jovyan/.pipes"
+        }
+        
+        spawner.extra_containers = [
+            {
+                "name":"flower-sidecar",
+                "image":"soullessblob/flower-sidecar:latest",
+                "imagePullPolicy":"Always",
+                "securityContext":{
+                    "runAsGroup":100
+                },
+                "volumeMounts":[
+                    {
+                        "name":"exports-vol",
+                        "mountPath":"/app/flower/user"
+                    },
+                    {
+                        "name":"pipes-vol",
+                        "mountPath":"/app/.pipes"
+                    },
+                    {{- if eq (include "flower.use_default_ca"  .) "false" }}
+                    {
+                        "name":"root-ca-vol",
+                        "mountPath": {{ include "flower.ca_path" . | quote }},
+                        "subPath":"ca.crt"
+                    }
+                    {{- end }}
+                ],
+                "env":[
+                    {
+                        "name":"ROOT_CERT_PATH",
+                        "value": {{ include "flower.ca_path" . | quote }}
+                    },
+                    {
+                        "name":"MLFLOW_EXTERNAL_TRACKING_URI",
+                        "value":spawner.environment["MLFLOW_EXTERNAL_TRACKING_URI"]
+                    },
+                    {
+                        "name":"PYTHONUNBUFFERED",
+                        "value":"1"
+                    },
+                    {
+                        "name":"MLFLOW_TRACKING_USERNAME",
+                        "value":spawner.environment["MLFLOW_TRACKING_USERNAME"]
+                    },
+                    {
+                        "name":"MLFLOW_TRACKING_PASSWORD",
+                        "value":spawner.environment["MLFLOW_TRACKING_PASSWORD"]
+                    },
+                    {
+                        "name":"MLFLOW_WORKSPACE",
+                        "value":spawner.environment.get("MLFLOW_WORKSPACE","default")
+                    },
+                    {
+                        "name":"SUPERLINK_CONTROL",
+                        "value": {{ include "flower.superlink_control" . | quote }}
+                    },
+                ]
+            }
+        ]
+
+    c.Spawner.pre_spawn_hook = flower_hook
+
     {{- end }}

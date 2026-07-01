@@ -1,0 +1,114 @@
+{{- if .Values.flower.client.supernode.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flower-supernode
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: flower-supernode
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flower-supernode
+  template:
+    metadata:
+      labels:
+        app: flower-supernode
+    spec:
+      volumes:
+        {{- if eq (include "flower.use_default_ca" .) "false" }}
+        - name: certs-vol
+          secret:
+            secretName: {{ include "flower.ca_secretname" . }}
+        {{- end }}
+        - name: keys-shared
+          emptyDir: {}
+        - name: client-register-vol
+          configMap:
+            name: flower-supernode-register
+        {{- if eq (include "flower.caps" .) "true" }}
+        - name: caps-vol
+          configMap:
+            name: flower-supernode-caps
+        {{- end }}
+      initContainers:
+        - name: register-node
+          image: python:3.11-slim
+          volumeMounts:
+            - name: keys-shared
+              mountPath: /auth
+            {{- if eq (include "flower.use_default_ca" .) "false" }}
+            - name: certs-vol
+              mountPath: {{ include "flower.ca_path" . }}
+              subPath: ca.crt
+            {{- end }}
+            - name: client-register-vol
+              mountPath: /scripts/register.py
+              subPath: register.py
+            - name: client-register-vol
+              mountPath: /root/.flwr/config.toml 
+              subPath: config.toml
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              pip install --no-cache-dir cryptography flwr
+              set -e
+              python /scripts/register.py
+      containers:
+        - name: supernode
+          image: flwr/supernode:latest
+          volumeMounts:
+            {{- if eq (include "flower.use_default_ca" .) "false" }}
+            - name: certs-vol
+              mountPath: {{ include "flower.ca_path" . }}
+              subPath: ca.crt
+            {{- end }}
+            - name: keys-shared
+              mountPath: /auth
+          env:
+            - name: FLWR_LOG_LEVEL
+              value: DEBUG
+          args: 
+            - "--isolation"
+            - "process"
+            - "--clientappio-api-address"
+            - "0.0.0.0:9094"
+            - "--superlink"
+            - {{ printf "%s" (include "flower.superlink_fleet" .) | quote }}
+            - "--root-certificates"
+            - {{ include "flower.ca_path" . | quote }}
+            - "--auth-supernode-private-key"
+            - "/auth/node_key"
+        - name: superexec
+          image: soullessblob/flower-supernode:latest
+          {{- if eq (include "flower.caps" .) "true" }}
+          volumeMounts:
+            - name: caps-vol
+              mountPath: /etc/flower/capabilities.py
+              subPath: capabilities.py
+          {{- end }}
+          env:
+            - name: FEDERATED_EXPERIMENT_ID
+              value: {{ include "federated.experiment_id" . | quote}}
+            - name: MLFLOW_WORKSPACE
+              value: {{ include "federated.workspace_name" . | quote}}
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow-svc:5000"
+            - name: MLFLOW_TRACKING_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: credentials
+                  key: mlflow-fed-username
+            - name: MLFLOW_TRACKING_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credentials
+                  key: mlflow-fed-password
+          args: 
+            - --insecure
+            - --plugin-type
+            - clientapp
+            - --appio-api-address
+            - 127.0.0.1:9094
+{{- end }}

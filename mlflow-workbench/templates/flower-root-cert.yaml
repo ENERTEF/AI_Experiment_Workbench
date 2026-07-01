@@ -1,0 +1,10 @@
+{{- if .Values.flower.client.superlink_cert }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: flower-root-cert
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+data:
+  ca.crt: {{ .Values.flower.client.superlink_cert | b64enc }}
+{{- end }}
