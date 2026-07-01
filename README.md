@@ -218,6 +218,8 @@ CAPABILITIES = {
 And the server will query all registered nodes, which will return their capabilities dynamically.<br> 
 The query system supports entirely arbitrary keys and values, so make sure whatever the user is asking for, exists, otherwise no supernode will be scheduled, and the project run aborted.<br>
 **IMPORTANT**: The constraints work on an all or nothing basis, the only accepted nodes are the ones that fulfill all requirements (for now).<br> 
+**IMPORTANT**: The only supported types in the supernode capabilities are primitives, or lists thereof.<br>
+The only supported operators are lt,gt,eq ( for comparables only ) and has ( for lists only ).<br> 
 
 
 ## Summary
