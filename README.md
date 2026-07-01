@@ -262,3 +262,6 @@ Container orchestration platform managing all services, networking, and resource
 - [TensorBoard Documentation](https://www.tensorflow.org/tensorboard)
 - [MinIO Documentation](https://docs.min.io/community/minio-object-store/index.html)
 - [Kubernetes Documentation](https://kubernetes.io/docs/)
+## Questions
+
+If you have any questions, feel free to reach out to lara.roth@eonerc.rwth-aachen.de
