@@ -45,7 +45,7 @@ Postgres and Minio are there to be used by Mlflow. Only persistence and authenti
 The chart relies on Keycloak to manage Mlflow workspaces belonging to different users. Admin users have access to all workspaces, standard users have access to only their workspace.<br>
 The mediator between Keycloak and Mlflow is Jupyterhub. It takes the user identity after successfull authentication, and creates Mlflow credentials at the container creation stage.<br>
 
-If auth.external.enabled is false with a default realm and app client.<br>
+If auth.external.enabled is false, a keycloak instance is deployed with a default realm and app client.<br>
 The Keycloak deployed by the app comes preconfigured with one admin and one standard user.<br>
 Use the Keycloak admin credentials to create other users:
 ```
