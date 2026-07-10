@@ -18,7 +18,7 @@ If you already have a properly configured cluster, jump to step 3
 
 1. Install cluster manager of your choice, eg:
 ```bash
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server" sh -s - --flannel-backend none --token 12345
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server" sh -s - --disable=traefik --token 12345
 ```
 2. Install dependencies:
 ```bash
