@@ -1,4 +1,0 @@
-[submodule "cluster-starter"]
-	path = cluster-starter
-	url = https://github.com/SystemsPurge/cluster-starter.git
-    branch = main
