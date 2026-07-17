@@ -12,28 +12,65 @@ This ecosystem is configurable to include:
 
 ## Deployment 
 
-**IMPORTANT**: To deploy the AI Workbench, a cluster is needed, preferably equipped with ingress and cert controllers. 
-The submodule and helper scripts are provided for a setup that mimics production environment ( non self-signed certificates + ingress over host machine )
-If you already have a properly configured cluster, jump to step 3
-
-1. Install cluster manager of your choice, eg:
+### Cluster bootstrapping
+**IMPORTANT**: To deploy the AI Workbench, a cluster is needed, equipped with ingress and cert controllers. 
+If you already have a properly configured cluster, jump to the next section
+1.Install manager, easiest is microk8s:
 ```bash
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server" sh -s - --disable=traefik --token 12345
+sudo snap install microk8s --classic --channel=1.35
 ```
-2. Install dependencies:
+2. Enable addons
 ```bash
-cd cluster-start
-chmod +x cluster-create.sh && ./cluster-create.sh
-chmod +x cluster-prepate.sh && ./cluster-prepare.sh
+#corerdns
+microk8s enable dns
+#helm
+microk8s enable helm3
+#cert manager
+microk8s enable cert-manager
+#optionally ingress, can be separately installed, as newer microk8s versions
+#use traefik. If you opt for this, jump to step 4.
+microk8s enable ingress
+```
+3. Install ingress nginx
+```bash
+#may need to prefix helm commands with microk8s, depending on your setup
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --create-namespace
 ```
 
-3. Clone repository and navigate to directory:
+4. Create issuer, for example letsencrypt if cluster is properly exposed:
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+spec:
+  acme:
+    email: dummy@email.com
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-account-key
+    solvers:
+    - http01:
+        ingress:
+          ingressClassName: nginx
+```
+Or using [this](https://github.com/SystemsPurge/cluster-starter/tree/cli-maker-test) if opting
+for a certification for a local setup:
+```bash
+cstart cluster add-issuer -d step
+```
+
+
+### Installation
+1. Clone repository and navigate to directory:
 ```bash
 git clone --recurse-submodules <repository-url>
 cd AI_Experiment_Workbench
 ```
 
-4. Install chart ( change values beforehand if needed ):
+2. Install chart ( change values beforehand if needed ):
 ```bash
 helm upgrade --install mlfw -n mlfw --create-namespace ./mlflow-workbench -f mlflow-workbench/values.yaml
 ```
