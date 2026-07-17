@@ -14,8 +14,8 @@ This ecosystem is configurable to include:
 
 ### Cluster bootstrapping
 **IMPORTANT**: To deploy the AI Workbench, a cluster is needed, equipped with ingress and cert controllers. 
-If you already have a properly configured cluster, jump to the next section
-1.Install manager, easiest is microk8s:
+If you already have a properly configured cluster, jump to the next section.
+1. Install manager, easiest is microk8s:
 ```bash
 sudo snap install microk8s --classic --channel=1.35
 ```
