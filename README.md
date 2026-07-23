@@ -27,6 +27,8 @@ microk8s enable dns
 microk8s enable helm3
 #cert manager
 microk8s enable cert-manager
+#a loadbalancer is necessary for exposing the cluster
+microk8s enable metallb
 #optionally ingress, can be separately installed, as newer microk8s versions
 #use traefik. If you opt for this, jump to step 4.
 microk8s enable ingress
@@ -56,10 +58,44 @@ spec:
         ingress:
           ingressClassName: nginx
 ```
-Or using [this](https://github.com/SystemsPurge/cluster-starter/tree/cli-maker-test) if opting
-for a certification for a local setup:
-```bash
-cstart cluster add-issuer -d step
+Or using local setup:
+```yaml
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-bootstrap
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: root-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: Root CA
+  secretName: root-ca
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  duration: 87600h
+  renewBefore: 720h
+  issuerRef:
+    name: selfsigned-bootstrap
+    kind: ClusterIssuer
+    group: cert-manager.io
+  usages:
+    - cert sign
+    - crl sign
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: internal-ca
+spec:
+  ca:
+    secretName: root-ca
 ```
 
 
