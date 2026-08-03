@@ -1,5 +1,6 @@
 #!/bin/bash
 
+#onyl wrap run command
 if [ "$1" != "run" ]; then
     exec /opt/conda/bin/flwr.real "$@"
 fi

@@ -60,6 +60,7 @@ def load_exports():
     import flower.user.exports as exports
     return exports
 
+#dynamic validation of exports file FORM ONLY
 def validate_exports(exports):
     class ExportsValidationError(BaseException):
         pass
