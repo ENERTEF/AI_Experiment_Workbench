@@ -1,0 +1,51 @@
+stages:
+  - build_and_push
+build_image:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: on_success
+  tags:
+    - self-hosted
+  stage: build_and_push
+
+  before_script:
+    - until docker info; do sleep 1; done
+    - cd "$CI_PROJECT_DIR"
+    - docker run --rm --privileged tonistiigi/binfmt --install all
+    - docker context create tls-env || true
+    - docker buildx create --name mybuilder --use tls-env || docker buildx use mybuilder
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+
+  script:
+    - |
+      CHANGED_IMAGES=$(git diff --name-only "$CI_COMMIT_BEFORE_SHA" "$CI_COMMIT_SHA" \
+        | grep '^images/' \
+        | cut -d/ -f2 \
+        | sort -u)
+
+      if [ -z "$CHANGED_IMAGES" ]; then
+        echo "No image changes detected."
+        exit 0
+      fi
+
+      echo "Changed images:"
+      echo "$CHANGED_IMAGES"
+
+      for IMAGE in $CHANGED_IMAGES; do
+        IMAGE_DIR="images/$IMAGE"
+
+        if [ ! -f "$IMAGE_DIR/Dockerfile" ]; then
+          echo "Skipping $IMAGE_DIR (no Dockerfile)"
+          continue
+        fi
+
+        echo "Building and pushing $CI_REGISTRY_IMAGE/$IMAGE"
+
+        docker buildx build \
+          --provenance=false \
+          --platform linux/amd64,linux/arm64 \
+          --tag "$CI_REGISTRY_IMAGE/$IMAGE:latest" \
+          --tag "$CI_REGISTRY_IMAGE/$IMAGE:$CI_COMMIT_SHORT_SHA" \
+          --push \
+          "$IMAGE_DIR"
+      done

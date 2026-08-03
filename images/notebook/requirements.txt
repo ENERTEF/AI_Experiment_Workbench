@@ -7,3 +7,4 @@ tensorboard
 jupyter-server-proxy
 flwr
 jax[cuda13]
+tensorflow
