@@ -1,0 +1,75 @@
+{{- if .Values.flower.superlink.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flower-superlink
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: flower-superlink
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flower-superlink
+  template:
+    metadata:
+      labels:
+        app: flower-superlink
+    spec:
+      volumes:
+        - name: certs-vol
+          secret:
+            secretName: {{ include "flower.tls_secretname" . }}
+      containers:
+        - name: superlink
+          image: flwr/superlink:latest
+          env:
+            - name: FLWR_LOG_LEVEL
+              value: DEBUG
+          args: 
+            - "--enable-supernode-auth"
+            - "--isolation"
+            - "process"
+            - "--serverappio-api-address"
+            - "0.0.0.0:9091"
+            - "--fleet-api-address"
+            - "0.0.0.0:9092"
+            - "--ssl-ca-certfile"
+            {{- if .Values.flower.superlink.use_default_ca }}
+            - "/etc/ssl/certs/ca-certificates.crt"
+            {{- else }}
+            - "/app/certs/ca.crt"
+            {{- end }}
+            - "--ssl-certfile"
+            - "/app/certs/tls.crt"
+            - "--ssl-keyfile"
+            - "/app/certs/tls.key"
+          volumeMounts:
+            - name: certs-vol
+              mountPath: /app/certs
+              readOnly: true
+          ports:
+            - containerPort: 9092
+            - containerPort: 9093
+        - name: superexec
+          image: soullessblob/flower-superlink:latest
+          env:
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow-svc:5000"
+            - name: MLFLOW_TRACKING_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: credentials
+                  key: mlflow-admin-username
+            - name: MLFLOW_TRACKING_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credentials
+                  key: mlflow-admin-password
+          args: 
+            - --insecure
+            - --plugin-type
+            - serverapp
+            - --appio-api-address
+            - 127.0.0.1:9091
+{{- end }}

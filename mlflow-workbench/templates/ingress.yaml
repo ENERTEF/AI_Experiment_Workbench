@@ -1,0 +1,95 @@
+{{- if eq .Values.expose.type "ingress" }}
+
+{{- if empty .Values.expose.hostname }}
+{{- fail "expose.hostname must be configured when expose.type=ingress" }}
+{{- end }}
+
+{{- if .Values.flower.superlink.enabled }}
+{{- if empty .Values.expose.hostname }}
+{{- fail "Flower exposure requires expose.hostname" }}
+{{- end }}
+{{- end }}
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jhub-ingress
+  namespace: {{ .Release.Namespace }}
+  {{- if .Values.expose.annotations }}
+  annotations:
+    {{- .Values.expose.annotations | toYaml | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.expose.ingress.classname }}
+  tls:
+    - hosts:
+      - {{ .Values.expose.hostname | quote }}
+      secretName: {{ default (printf "%s-tls" .Release.Name) .Values.expose.tls.secretname }}
+  rules:
+    - host: {{ .Values.expose.hostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: proxy-public
+                port: { number: 80 }
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: mlflow-svc
+                port: { number: 5000 }
+          {{- if not .Values.auth.external.enabled }}
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: keycloak-svc
+                port: { number: 8080 }
+          {{- end }}
+{{- if .Values.flower.superlink.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flower-ingress
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: GRPCS
+    {{- if .Values.flower.superlink.ip_whitelist }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ .Values.flower.superlink.ip_whitelist | join "," | quote }}
+    {{- end }}
+  {{- if .Values.expose.annotations }}
+    {{- .Values.expose.annotations | toYaml | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.expose.ingress.classname }}
+  tls:
+    - secretName: {{ include "flower.tls_secretname" . }}
+      hosts:
+        - {{ printf "flwr-sv.%s" .Values.expose.hostname | quote }}
+        - {{ printf "flwr-ctrl.%s" .Values.expose.hostname | quote }}
+  rules:
+    - host: {{ printf "flwr-sv.%s" .Values.expose.hostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: flower-superlink-svc
+                port: { number: 9092 }
+    - host: {{ printf "flwr-ctrl.%s" .Values.expose.hostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: flower-superlink-svc
+                port: { number: 9093 }
+{{- end }}
+{{- end }}

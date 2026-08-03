@@ -1,0 +1,507 @@
+# Keycloak
+
+If the keycloak used in the app is internal ( deployed by the chart itself ), then any reboot of jupyterhub ( e.g, due to an upgrade )
+will require a reboot of the keycloak deployment as well, to reconcile client secrets:
+
+```bash
+k rollout restart deployment keycloak -n <your namespace>
+```
+
+# Kubespawner
+
+More info can be found [here](https://github.com/jupyterhub/kubespawner/issues/915).
+This is a problem that arises only on clusters that return the BOOKMARK type events. 
+The kubespawner does not check event type, bookmark events have no namespace under metadata,
+and the kubespawner will always attempt accessing metadata.namespace. 
+A workaround is to mount a modified version of reflector.py directly into the hub. For that, values need to be modified accoridngly:
+
+```yaml
+jhub_central:
+  hub:
+    extraVolumes:
+      - name: reflector-bug-override
+        configMap:
+          name: reflector-bug-override
+    extraVolumeMounts:
+      - name: reflector-bug-override
+        mountPath: /usr/local/lib/python3.12/site-packages/kubespawner/reflector.py
+        subPath: reflector.py
+        readOnly: true
+```
+
+Keep in mind the mountpath may depend on your hub version.
+The file that needs to be mounted simply adds an event type check:
+
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reflector-bug-override
+  namespace: <your deployment namespace>
+data:
+  reflector.py: |
+    # specifically use concurrent.futures for threadsafety
+    # asyncio Futures cannot be used across threads
+    import asyncio
+    import json
+    import time
+    from functools import partial
+
+    from kubernetes_asyncio import client, watch
+    from traitlets import Any, Bool, Dict, Int, Unicode
+    from traitlets.config import LoggingConfigurable
+    from urllib3.exceptions import ReadTimeoutError
+
+    from .clients import shared_client
+
+    # This is kubernetes client implementation specific, but we need to know
+    # whether it was a network or watch timeout.
+
+
+    class ResourceReflector(LoggingConfigurable):
+        """Base class for keeping a local up-to-date copy of a set of
+        kubernetes resources.
+
+        Must be subclassed once per kind of resource that needs watching.
+
+        Creating a reflector should be done with the create() classmethod,
+        since that, in addition to creating the instance starts the watch task.
+
+        Shutting down a reflector should be done by awaiting its stop() method.
+
+        KubeSpawner does not do this, because its reflectors are singleton
+        instances shared among multiple spawners.  The watch task therefore runs
+        until JupyterHub exits.
+        """
+
+        labels = Dict(
+            {},
+            config=True,
+            help="""
+            Labels to reflect onto local cache
+            """,
+        )
+
+        fields = Dict(
+            {},
+            config=True,
+            help="""
+            Fields to restrict the reflected objects
+            """,
+        )
+
+        resources = Dict(
+            {},
+            help="""
+            Dictionary of resource names to the appropriate resource objects.
+
+            This can be accessed across threads safely.
+            """,
+        )
+
+        kind = Unicode(
+            'resource',
+            help="""
+            Human readable name for kind of object we're watching for.
+
+            Used for diagnostic messages.
+            """,
+        )
+
+        omit_namespace = Bool(
+            False,
+            config=True,
+            help="""
+            Set this to true if the reflector is to operate across
+            multiple namespaces.
+            """,
+        )
+
+        namespace = Unicode(
+            None,
+            allow_none=True,
+            help="""
+            Namespace to watch for resources in; leave at 'None' for
+            multi-namespace reflectors.
+            """,
+        )
+
+        list_method_name = Unicode(
+            "",
+            help="""
+            Name of function (on apigroup respresented by
+            `api_group_name`) that is to be called to list resources.
+
+            This will be passed a a label selector.
+
+            If self.omit_namespace is False you want something of the form
+            list_namespaced_<resource> - for example,
+            `list_namespaced_pod` will give you a PodReflector.  It will
+            take its namespace from self.namespace (which therefore should
+            not be None).
+
+            If self.omit_namespace is True, you want
+            list_<resource>_for_all_namespaces.
+
+            This must be set by a subclass.
+
+            It is not necessary to set it for pod or event reflectors, because
+            __init__ will figure it out.  If you create your own reflector
+            subclass you probably want to add the logic to choose the method
+            name to that class's __init__().
+            """,
+        )
+
+        api_group_name = Unicode(
+            'CoreV1Api',
+            help="""
+            Name of class that represents the apigroup on which
+            `list_method_name` is to be found.
+
+            Defaults to CoreV1Api, which has everything in the 'core' API group. If
+            you want to watch Ingresses you would have to use NetworkingV1Api.
+            """,
+        )
+
+        request_timeout = Int(
+            60,
+            config=True,
+            help="""
+            Network timeout for kubernetes watch.
+
+            Trigger watch reconnect when a given request is taking too long,
+            which can indicate network issues.
+            """,
+        )
+
+        timeout_seconds = Int(
+            10,
+            config=True,
+            help="""
+            Timeout for kubernetes watch.
+
+            Trigger watch reconnect when no watch event has been received.
+            This will cause a full reload of the currently existing resources
+            from the API server.
+            """,
+        )
+
+        restart_seconds = Int(
+            30,
+            config=True,
+            help="""
+            Maximum time before restarting a watch.
+
+            The watch will be restarted at least this often,
+            even if events are still arriving.
+            Avoids trusting kubernetes watch to yield all events,
+            which seems to not be a safe assumption.
+            """,
+        )
+
+        on_failure = Any(help="""Function to be called when the reflector gives up.""")
+
+        _stopping = Bool(False)
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
+            # Client configuration for kubernetes, as done via the load_config
+            # function, has already taken place in KubeSpawner or KubeIngressProxy
+            # initialization steps.
+            self.api = shared_client(self.api_group_name)
+
+            # FIXME: Protect against malicious labels?
+            self.label_selector = ','.join([f'{k}={v}' for k, v in self.labels.items()])
+            self.field_selector = ','.join([f'{k}={v}' for k, v in self.fields.items()])
+
+            self.first_load_future = asyncio.Future()
+
+            # Make sure that we know kind, whether we should omit the
+            #  namespace, and what our list_method_name is.  For the things
+            #  we already know about, we can derive list_method_name from
+            #  those two things.  New reflector types should also update
+            #  their __init__() methods to derive list_method_name, but you
+            #  could just set it directly in the subclass.
+            if not self.list_method_name:
+                plural_to_singular = {
+                    "endpoints": "endpoints",
+                    "events": "event",
+                    "ingresses": "ingress",
+                    "pods": "pod",
+                    "services": "service",
+                }
+
+                if self.kind in plural_to_singular:
+                    if self.omit_namespace:
+                        self.list_method_name = (
+                            f"list_{plural_to_singular[self.kind]}_for_all_namespaces"
+                        )
+                    else:
+                        self.list_method_name = (
+                            f"list_namespaced_{plural_to_singular[self.kind]}"
+                        )
+
+            # Make sure we have the required values.
+            if not self.kind:
+                raise RuntimeError("Reflector kind must be set!")
+            if not self.list_method_name:
+                raise RuntimeError("Reflector list_method_name must be set!")
+
+            self.watch_task = None
+
+        async def _list_and_update(self, resource_version=None):
+            """
+            Update current list of resources by doing a full fetch.
+
+            Overwrites all current resource info.
+            """
+            initial_resources = None
+            kwargs = dict(
+                label_selector=self.label_selector,
+                field_selector=self.field_selector,
+                _request_timeout=self.request_timeout,
+                _preload_content=False,
+            )
+            if resource_version is not None:
+                kwargs["resource_version"] = resource_version
+                kwargs["resource_version_match"] = "NotOlderThan"
+            if not self.omit_namespace:
+                kwargs["namespace"] = self.namespace
+
+            list_method = getattr(self.api, self.list_method_name)
+
+            try:
+                initial_resources_raw = await list_method(**kwargs)
+                if not initial_resources_raw.ok:
+                    raise client.ApiException(
+                        status=initial_resources_raw.status,
+                        reason=initial_resources_raw.reason,
+                    )
+            except client.ApiException:
+                self.log.exception(
+                    f'An error occurred when calling Kubernetes API.'
+                    f' Status: {initial_resources_raw.status} {initial_resources_raw.reason}.'
+                    f' Message: {(await initial_resources_raw.json())["message"]}'
+                )
+                raise
+
+            # This is an atomic operation on the dictionary!
+            initial_resources = json.loads(await initial_resources_raw.read())
+            self.resources = {
+                f'{p["metadata"]["namespace"]}/{p["metadata"]["name"]}': p
+                for p in initial_resources["items"]
+            }
+            if not self.first_load_future.done():
+                # signal that we've loaded our initial data at least once
+                self.first_load_future.set_result(None)
+            # return the resource version so we can hook up a watch
+            return initial_resources["metadata"]["resourceVersion"]
+
+        async def _watch_and_update(self):
+            """
+            Keeps the current list of resources up-to-date
+
+            We first fetch the list of current resources, and store that. Then we
+            register to be notified of changes to those resources, and keep our
+            local store up-to-date based on these notifications.
+
+            We also perform exponential backoff, giving up after we hit 32s
+            wait time. This should protect against network connections dropping
+            and intermittent unavailability of the api-server. Every time we
+            recover from an exception we also do a full fetch, to pick up
+            changes that might've been missed in the time we were not doing
+            a watch.
+
+            Since the resources are read-only in the Spawner (where they are
+            used), then this is safe.  The Spawner's view of the world might be
+            out-of-date, but it's not going to corrupt any data.
+            """
+            selectors = []
+            if self.label_selector:
+                selectors.append("label selector=%r" % self.label_selector)
+            if self.field_selector:
+                selectors.append("field selector=%r" % self.field_selector)
+            log_selector = ', '.join(selectors)
+
+            # fetch Any (=api-server cached) data from apiserver on initial fetch
+            # see https://kubernetes.io/docs/reference/using-api/api-concepts/#resource-versions
+            # for more information
+            resource_version = "0"
+
+            cur_delay = 0.1
+
+            if self.omit_namespace:
+                ns_str = "all namespaces"
+            else:
+                ns_str = f"namespace {self.namespace}"
+
+            self.log.info(
+                "watching for %s with %s in %s",
+                self.kind,
+                log_selector,
+                ns_str,
+            )
+            while True:
+                self.log.debug("Connecting %s watcher", self.kind)
+                start = time.monotonic()
+                w = watch.Watch()
+                try:
+                    resource_version = await self._list_and_update(resource_version)
+                    cur_delay = 0.1
+                    watch_args = {
+                        "label_selector": self.label_selector,
+                        "field_selector": self.field_selector,
+                        "resource_version": resource_version,
+                    }
+                    if not self.omit_namespace:
+                        watch_args["namespace"] = self.namespace
+                    if self.request_timeout:
+                        # set network receive timeout
+                        watch_args['_request_timeout'] = self.request_timeout
+                    if self.timeout_seconds:
+                        # set watch timeout
+                        watch_args['timeout_seconds'] = self.timeout_seconds
+                    # Calling the method with _preload_content=False is a performance
+                    # optimization making the Kubernetes client do less work. See
+                    # https://github.com/jupyterhub/kubespawner/pull/424.
+                    method = partial(
+                        getattr(self.api, self.list_method_name), _preload_content=False
+                    )
+                    async with w.stream(method, **watch_args) as stream:
+                        async for watch_event in stream:
+                            # in case of timeout_seconds, the w.stream just exits (no exception thrown)
+                            # -> we stop the watcher and start a new one
+                            # Remember that these events are k8s api related WatchEvents
+                            # objects, not k8s Event or Pod representations, they will
+                            # reside in the WatchEvent's object field depending on what
+                            # kind of resource is watched.
+                            #
+                            # ref: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#watchevent-v1-meta
+                            # ref: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.28/#event-v1-core
+                            cur_delay = 0.1
+                            resource = watch_event['raw_object']
+                            if watch_event['type'] == 'BOOKMARK':
+                              resource_version = watch_event['raw_object']['metadata']['resourceVersion']
+                              continue
+                            ref_key = "{}/{}".format(
+                                resource["metadata"]["namespace"],
+                                resource["metadata"]["name"],
+                            )
+                            if watch_event['type'] == 'DELETED':
+                                # This is an atomic delete operation on the dictionary!
+                                self.resources.pop(ref_key, None)
+                            else:
+                                # This is an atomic operation on the dictionary!
+                                self.resources[ref_key] = resource
+                                resource_version = resource["metadata"]["resourceVersion"]
+                            if self._stopping:
+                                self.log.info("%s watcher stopped: inner", self.kind)
+                                break
+                            watch_duration = time.monotonic() - start
+                            if watch_duration >= self.restart_seconds:
+                                self.log.debug(
+                                    "Restarting %s watcher after %i seconds",
+                                    self.kind,
+                                    watch_duration,
+                                )
+                                break
+
+                except ReadTimeoutError:
+                    # network read time out, just continue and restart the watch
+                    # this could be due to a network problem or just low activity
+                    self.log.warning("Read timeout watching %s, reconnecting", self.kind)
+                    continue
+                except asyncio.CancelledError:
+                    self.log.debug("Cancelled watching %s", self.kind)
+                    raise
+                except Exception:
+                    # ensure we request a valid resource version on retry,
+                    # needed on 410 Gone errors
+                    resource_version = "0"
+                    cur_delay = cur_delay * 2
+                    if cur_delay > 30:
+                        self.log.exception("Watching resources never recovered, giving up")
+                        if self.on_failure:
+                            self.on_failure()
+                        return
+                    self.log.exception(
+                        "Error when watching resources, retrying in %ss", cur_delay
+                    )
+                    await asyncio.sleep(cur_delay)
+                    continue
+                else:
+                    # no events on watch, reconnect
+                    self.log.debug("%s watcher timeout", self.kind)
+                finally:
+                    w.stop()
+                    await w.close()
+                    if self._stopping:
+                        self.log.info("%s watcher stopped: outer", self.kind)
+                        break
+            self.log.warning("%s watcher finished", self.kind)
+
+        async def start(self):
+            """
+            Start the reflection process!
+
+            We'll do a blocking read of all resources first, so that we don't
+            race with any operations that are checking the state of the pod
+            store - such as polls. This should be called only once at the
+            start of program initialization (when the singleton is being created),
+            and not afterwards!
+            """
+            if self.watch_task and not self.watch_task.done():
+                raise RuntimeError(f"Task watching for {self.kind} is already running")
+            try:
+                await self._list_and_update()
+            except Exception as e:
+                self.log.exception(f"Initial list of {self.kind} failed")
+                if not self.first_load_future.done():
+                    # anyone awaiting our first load event should fail
+                    self.first_load_future.set_exception(e)
+                raise
+
+            self.watch_task = asyncio.create_task(self._watch_and_update())
+
+        async def stop(self):
+            """
+            Cleanly shut down the watch task.
+            """
+            self._stopping = True
+            if self.watch_task and not self.watch_task.done():
+                # cancel the task, wait for it to complete
+                self.watch_task.cancel()
+                try:
+                    timeout = 5
+                    await asyncio.wait_for(self.watch_task, timeout)
+                except asyncio.TimeoutError:
+                    # Raising the TimeoutError will cancel the task.
+                    self.log.warning(
+                        f"Watch task did not finish in {timeout}s and was cancelled"
+                    )
+            self.watch_task = None
+
+
+    class NamespacedResourceReflector(ResourceReflector):
+        """
+        Watches for resources in a particular namespace.  The list_methods
+        want both a method name and a namespace.
+        """
+
+        omit_namespace = False
+
+
+    class MultiNamespaceResourceReflector(ResourceReflector):
+        """
+        Watches for resources across all namespaces.  The list_methods
+        want only a method name.  Note that this requires the service account
+        to be significantly more powerful, since it must be bound to ClusterRoles
+        rather than just Roles, and therefore this is inherently more
+        dangerous.
+        """
+
+        omit_namespace = True
+
+```

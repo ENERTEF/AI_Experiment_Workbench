@@ -1,0 +1,9 @@
+mlflow
+scikit-learn
+pandas
+numpy
+matplotlib
+tensorboard
+jupyter-server-proxy
+flwr
+jax[cuda13]

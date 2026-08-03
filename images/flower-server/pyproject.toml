@@ -1,0 +1,13 @@
+[project]
+name = "mlflow-federation-server"
+version = "1.0.0"
+description = "Flower + MLflow Server App"
+dependencies = [
+    "mlflow",
+]
+
+[tool.flwr.app]
+publisher = "acs"
+
+[tool.flwr.app.components]
+serverapp = "server:app"

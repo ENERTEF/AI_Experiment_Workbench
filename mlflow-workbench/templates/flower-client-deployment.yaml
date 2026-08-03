@@ -1,0 +1,86 @@
+{{- if .Values.flower.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flower-client
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: flower-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flower-client
+  template:
+    metadata:
+      labels:
+        app: flower-client
+    spec:
+      volumes:
+        - name: keys-shared
+          emptyDir: {}
+        - name: client-register-vol
+          configMap:
+            name: flower-client-register
+      initContainers:
+        - name: register-node
+          image: python:3.11-slim
+          volumeMounts:
+            - name: keys-shared
+              mountPath: /auth
+            - name: client-register-vol
+              mountPath: /scripts/register.py
+              subPath: register.py
+            - name: client-register-vol
+              mountPath: /root/.flwr/config.toml 
+              subPath: config.toml
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              sleep 60
+              pip install --no-cache-dir cryptography flwr
+              set -e
+              python /scripts/register.py
+              ls /auth
+      containers:
+        - name: supernode
+          image: flwr/supernode:latest
+          volumeMounts:
+            - name: keys-shared
+              mountPath: /auth
+          env:
+            - name: FLWR_LOG_LEVEL
+              value: INFO
+          args: 
+            - "--isolation"
+            - "process"
+            - "--clientappio-api-address"
+            - "0.0.0.0:9094"
+            - "--superlink"
+            - {{ printf "%s" (include "flower.hub_superlink" .) | quote }}
+            - "--root-certificates"
+            - "/etc/ssl/certs/ca-certificates.crt"
+            - "--node-config"
+            - {{ printf "dataset_tags=\"%s\"" (join "," .Values.flower.dataset_tags) | quote }}
+            - "--auth-supernode-private-key"
+            - "/auth/node_key"
+        - name: superexec
+          image: soullessblob/flower-client:latest
+          env:
+            - name: FEDERATED_EXPERIMENT_ID
+              value: {{ include "federated.experiment_id" . | quote}}
+            - name: MLFLOW_WORKSPACE
+              value: {{ include "federated.workspace_name" . | quote}}
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow-svc:5000"
+            - name: MLFLOW_TRACKING_USERNAME
+              value: {{ .Values.flower.fed_username | quote }}
+            - name: MLFLOW_TRACKING_PASSWORD
+              value: {{ .Values.flower.fed_password | quote }}
+          args: 
+            - --insecure
+            - --plugin-type
+            - clientapp
+            - --appio-api-address
+            - 127.0.0.1:9094
+{{- end }}

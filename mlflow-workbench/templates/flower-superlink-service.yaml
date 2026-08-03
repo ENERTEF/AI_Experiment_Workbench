@@ -1,0 +1,20 @@
+{{- if .Values.flower.superlink.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: flower-superlink-svc
+  namespace: {{ .Release.Namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: flower-superlink
+  ports:
+    - name: fleet-api
+      protocol: TCP
+      port: 9092
+      targetPort: 9092
+    - name: control-api-proxy
+      protocol: TCP
+      port: 9093
+      targetPort: 9093
+{{- end }}

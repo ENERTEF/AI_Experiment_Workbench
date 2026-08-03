@@ -1,0 +1,45 @@
+auth:
+  external:
+    enabled: true
+    client_id: "myworkbench"
+    client_secret: "#####################################"
+    realm_url: "https://keycloak.another.domain/realms/myrealm"
+    groups_key: "oauth_user.roles"
+    allowed_groups:
+      - standard_role_1
+      - standard_role_2
+    admin_groups:
+      - admin_role_1
+      - admin_role_1
+
+expose:
+  ingress:
+    classname: nginx
+  tls:
+    secretname: ""
+  type: "ingress"
+  annotations: {
+    cert-manager.io/cluster-issuer: letsencrypt
+  }
+  hostname: "host.mydomain"
+
+flower:
+  client:
+    sidecar:
+      enabled: false
+    supernode:
+      enabled: false
+      caps_file: ""
+    superlink_addr: ""
+    superlink_cert: ""
+  superlink:
+    #necessary with ACME/letsencrypt
+    use_default_ca: true
+    fed_username: mlflowfed
+    fed_password: mlflowfed123456
+    enabled: true
+    ip_whitelist:
+      #a whole range
+      - "192.168.0.0/24"
+      #a single ip
+      - "172.2.0.1/32"

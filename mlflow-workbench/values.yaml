@@ -1,0 +1,223 @@
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+replicaCount: 1
+
+#Shared values are anchored, it is advised to only change these values
+#And NOT OVERRIDE where they are referenced
+shared_values:
+  #Admin minio account, used by mlflow tracking server
+  minio_root_user: &MINIO_ROOT_USER "minio_user"
+  minio_root_password: &MINIO_ROOT_PASSWORD "minio_pwd"
+  minio_default_bucket: &MINIO_DEFAULT_BUCKET "mlflow"
+  minio_port: &MINIO_PORT 9000
+  #Admin postgres account, used by mlflow tracking server
+  postgres_user: &POSTGRES_USER "mlflow"
+  postgres_password: &POSTGRES_PASSWORD "mlflow"
+  postgres_db: &POSTGRES_DATABASE "mlflow"
+  postgres_port: &POSTGRES_PORT 5432
+  hub_admin_token: &HUB_ADMIN_TOKEN "cGFzcwo=" #"<put some base64 encoded string here>"
+
+#Jupyterhub is configured to use an auth_state_hook
+#In order to create an mlflow account for any user
+#Redirected from the specified keycloak (external or managed by this chart)
+#It also takes into account group permissions
+#Each standard user gets their own mlflow workspace
+#Admins have access to all workspaces in the mlflow tracking server
+auth:
+  #Keycloak bootstrapping credentials for generating a master realm + admin user
+  kc_admin: "admin"
+  kc_admin_pass: "admin"
+  #In some cluster setups, the certs may NOT be selfsigned, but still not recognized
+  #By the hub anyway, this field deactivates tls verification between the hub and Keycloak
+  #Temporary, Until further considerations can be made to instruct the hub to recognize
+  #Certain certs, maybe passed by CM name and namespace
+  insecure_skip_verify: false
+  external:
+    enabled: false
+    realm_url: ""
+    client_id: ""
+    client_secret: ""
+    groups_key: "oauth_user.roles"
+    allowed_groups:
+      - mlfw-user
+    admin_groups:
+      - mlfw-admin
+
+#Exposing may be achieved using one of two kubernetes API's
+#Ingress or Gateways. This is due to the current transition to the Gateways API
+#In all implementations that used to support ingress
+expose:
+  gateway:
+    #A gateway with a proper https listener is assumed to exist
+    #Any exposition will fail silently if it doesnt in the case where type=gateway
+    default_gateway:
+      name: eg
+      namespace: envoy-gateway-system
+      #The listener reference, this is used to create the HTTPRoute resource
+      https_terminate_listener: https
+      https_passthrough_listener: tls
+
+  ingress:
+    classname: nginx
+  #will be used for flower superlink tls as well
+  tls:
+    secretname: ""
+  #One of ingress or gateway, if different , no expose
+  type: "ingress"
+  #Use these annotations to reference your certificate issuer
+  #It is advised to always have a cert setup, even in a dev cluster, since everything
+  #Is configured over https
+  annotations: {
+    #cert-manager.io/issuer: step-issuer,
+    #cert-manager.io/issuer-kind: "StepClusterIssuer",
+    #cert-manager.io/issuer-group: "certmanager.step.sm"
+    #cert-manager.io/cluster-issuer: letsencrypt-prod
+  }
+  #tls/ingress hostname
+  hostname: ""
+
+#A copy of the values of the cloudpirates minio subchart
+minio-obj-storage:
+  replicaCount: 1
+  auth:
+    rootUser: *MINIO_ROOT_USER
+    rootPassword: *MINIO_ROOT_PASSWORD
+  defaultBuckets: *MINIO_DEFAULT_BUCKET
+  service:
+    type: ClusterIP
+    port: *MINIO_PORT
+    consolePort: 9090
+
+  persistence:
+    enabled: true
+    annotations: {}
+    size: 8Gi
+    accessModes:
+      - ReadWriteOnce
+    existingClaim: ""
+    mountPath: /mnt/data
+
+#A copy of the values of the cloudpirates postgres subchart
+pgsql-db:
+  replicaCount: 1
+  config:
+    extraConfig:
+      - "huge_pages = off"
+  auth:
+    username: *POSTGRES_USER
+    password: *POSTGRES_PASSWORD
+    database: *POSTGRES_DATABASE
+
+  service:
+    type: ClusterIP
+    port: *POSTGRES_PORT
+    targetPort: 5432
+
+  persistence:
+    enabled: true
+    annotations: {}
+    size: 8Gi
+    accessModes:
+      - ReadWriteOnce
+    existingClaim: ""
+    subPath: ""
+    labels: {}
+
+#MLflow pretty much simply manages the different contexts
+#In which different users are working, see the auth block comments for more
+mlflow:
+  minio_user: *MINIO_ROOT_USER
+  minio_password: *MINIO_ROOT_PASSWORD
+  minio_bucket: *MINIO_DEFAULT_BUCKET
+  minio_port: *MINIO_PORT
+
+  postgres_user: *POSTGRES_USER
+  postgres_password: *POSTGRES_PASSWORD
+  postgres_database: *POSTGRES_DATABASE
+  postgres_port: *POSTGRES_PORT
+
+  mlflow_admin_username: "admin"
+  mlflow_admin_password: "admin420noscope"
+
+#Federated learning configuration and remote task scheduling
+#Mainly to specify who is hub and who is client
+#TODO: Support remote (possibly Ray tune) or deployed cluster for task scheduling
+flower:
+  client:
+    #Inject flower cli sidecar into jupyter user env
+    sidecar:
+      enabled: false
+    #Participate in federated/distributed compute
+    supernode:
+      enabled: false
+      caps_file: ""
+    superlink_addr: ""
+    superlink_cert: ""
+  superlink:
+    #Deploy distributed compute server
+    fed_username: mlflowfed
+    fed_password: mlflowfed123456
+    use_default_ca: false
+    enabled: false
+    ip_whitelist: []
+#A copy of the values of the Z2JH subchart
+#The primary function of the hub in this app is to handle redirects from the IDP
+#To create an mlflow account depending on group, create the notebook and activate 
+#The mlflow UI and tensorboard extensions
+jhub_central:
+  scheduling:
+    userScheduler:
+      replicas: 1
+  prePuller:
+    hook:
+      enabled: false
+    continuous:
+      enabled: false
+  hub:
+    #These are the jupyterhub config templates
+    extraVolumes:
+      - name: jhub-extra-config
+        configMap:
+          name: jhub-extra-config
+    extraVolumeMounts: 
+      #This template is used to add the previously mentioned auth hooks
+      - name: jhub-extra-config
+        mountPath: /usr/local/etc/jupyterhub/jupyterhub_config.d/extra_config.py
+        subPath: extra_config.py
+        readOnly: true
+      #This template is used to configure the GenericOAuthenticator dynamically from the
+      #Values
+      - name: jhub-extra-config
+        mountPath: /usr/local/etc/jupyterhub/jupyterhub_config.d/auth_config.py
+        subPath: auth_config.py
+        readOnly: true
+    db:
+      type: sqlite-pvc
+      pvc:
+        accessModes:
+          - ReadWriteOnce
+    image:
+      name: quay.io/jupyterhub/k8s-hub
+      tag: "4.2.0"
+  proxy:
+    service:
+      type: ClusterIP
+    secretToken: '4d514a528099e35c7c7fd48acf9c9454ae41705412966f4a730d6c2f688cf948'
+  singleuser:
+    networkPolicy:
+      enabled: false
+    podNameTemplate: pod-{username}
+    storage:
+      dynamic:
+        storageAccessModes: [ReadWriteOnce]
+        volumeNameTemplate: volume-{username}
+        pvcNameTemplate: claim-{username}
+      type: dynamic
+      capacity: 10Gi
+      homeMountPath: /home/jovyan
+    image:
+      name: soullessblob/tensorflow-notebook
+      tag: alpha
+      pullPolicy: Always
+    defaultUrl: "/lab/tree/mlflow_tensorboard_examples.ipynb"

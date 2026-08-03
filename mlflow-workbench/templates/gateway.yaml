@@ -1,0 +1,80 @@
+{{- if eq .Values.expose.type "gateway" }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: jhub-http-route
+  namespace: {{ .Release.Namespace }}
+  {{- if .Values.expose.annotations }}
+  annotations:
+    {{- .Values.expose.annotations | toYaml | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    - name: {{ .Values.expose.gateway.default_gateway.name }}
+      namespace: {{ .Values.expose.gateway.default_gateway.namespace }}
+      sectionName: {{ .Values.expose.gateway.default_gateway.https_terminate_listener }}
+  hostnames:
+    - {{ .Values.expose.hostname}}
+  rules:
+    - matches:
+      - path:
+          type: PathPrefix
+          value: /
+      backendRefs:
+        - name: "proxy-public"
+          port: 80
+    - matches:
+      - path:
+          type: PathPrefix
+          value: /api
+      backendRefs:
+        - name: "mlflow-svc"
+          port: 5000
+    {{- if not .Values.auth.external.enabled }}
+    - matches:
+      - path:
+          type: PathPrefix
+          value: /auth
+      backendRefs:
+        - name: "keycloak-svc"
+          port: 8080
+    {{- end }}
+{{- if .Values.flower.superlink.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: flower-superlink-route
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Values.expose.gateway.default_gateway.name }}
+      namespace: {{ .Values.expose.gateway.default_gateway.namespace }}
+      sectionName: {{ .Values.expose.gateway.default_gateway.https_passthrough_listener }}
+  hostnames:
+    - {{ printf "flwr-sv.%s" .Values.expose.hostname | quote }}
+  rules:
+    - backendRefs:
+        - name: flower-superlink-svc
+          port: 9092
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: flower-control-route
+  namespace: {{ .Release.Namespace }}
+spec:
+  parentRefs:
+    - name: {{ .Values.expose.gateway.default_gateway.name }}
+      namespace: {{ .Values.expose.gateway.default_gateway.namespace }}
+      sectionName: {{ .Values.expose.gateway.default_gateway.https_passthrough_listener }}
+  hostnames:
+    - {{ printf "flwr-ctrl.%s" .Values.expose.hostname | quote }}
+  rules:
+    - backendRefs:
+        - name: flower-superlink-svc
+          port: 9093
+{{- end }}
+{{- end }}
+
+
