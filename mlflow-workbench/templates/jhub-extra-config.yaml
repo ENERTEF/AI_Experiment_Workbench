@@ -292,7 +292,7 @@ data:
         spawner.extra_containers = [
             {
                 "name":"flower-sidecar",
-                "image":"soullessblob/flower-sidecar:latest",
+                "image":"registry.git.nrw/rwth-acs/public/ai-workbench/flower-sidecar:latest",
                 "imagePullPolicy":"Always",
                 "securityContext":{
                     "runAsGroup":100

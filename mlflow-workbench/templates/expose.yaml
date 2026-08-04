@@ -10,7 +10,7 @@ metadata:
     {{- .Values.expose.annotations | toYaml | nindent 4 }}
   {{- end }}
 spec:
-  ingressClassName: {{ .Values.expose.ingress.className }}
+  ingressClassName: {{ .Values.expose.ingress.classname }}
   tls:
     - hosts:
       - {{ .Values.expose.hostname | quote }}
@@ -39,7 +39,7 @@ spec:
                 name: keycloak-svc
                 port: { number: 8080 }
           {{- end }}
-{{- if and .Values.flower.enabled .Values.flower.as_hub }}
+{{- if and .Values.flower.superlink.enabled}}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -47,14 +47,14 @@ metadata:
   name: flower-ingress
   namespace: {{ .Release.Namespace }}
   annotations:
-    nginx.ingress.kubernetes.io/whitelist-source-range: {{ join "," .Values.flower.ip_whitelist | quote }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ join "," .Values.flower.superlink.ip_whitelist | quote }}
     nginx.ingress.kubernetes.io/ssl-passthrough: "true"
     nginx.ingress.kubernetes.io/backend-protocol: GRPCS
   {{- if .Values.expose.annotations }}
     {{- .Values.expose.annotations | toYaml | nindent 4 }}
   {{- end }}
 spec:
-  ingressClassName: {{ .Values.expose.ingress.className }}
+  ingressClassName: {{ .Values.expose.ingress.classname }}
   tls:
     - secretName: flower-server-tls
       hosts:
@@ -95,7 +95,7 @@ spec:
   parentRefs:
     - name: {{ .Values.expose.gateway.default_gateway.name }}
       namespace: {{ .Values.expose.gateway.default_gateway.namespace }}
-      sectionName: {{ .Values.expose.gateway.default_gateway.https_listener }}
+      sectionName: {{ .Values.expose.gateway.default_gateway.https_terminate_listener }}
   hostnames:
     - {{ .Values.expose.hostname}}
   rules:
@@ -122,17 +122,7 @@ spec:
         - name: "keycloak-svc"
           port: 8080
     {{- end }}
-    {{- if and .Values.flower.enabled .Values.flower.as_hub }}
-    - matches:
-      - path:
-          type: PathPrefix
-          value: /flower-server
-      backendRefs:
-        - name: "flower-server-svc"
-          port: 9092
-    {{- end }}
 {{- else }}
   {{- fail "Unrecognized expose type, should be one of ingress or gateway" -}}
 {{- end }}
 {{- end }}
-

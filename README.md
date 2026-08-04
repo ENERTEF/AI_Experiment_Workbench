@@ -171,7 +171,7 @@ Custom user images can be configured:
 
 ```
 image:
-  name: soullessblob/tensorflow-notebook
+  name: registry.git.nrw/rwth-acs/public/ai-workbench/notebook:latest
 ```
 This is useful when using custom notebooks with specific dependencies.<br>
 The image of user environment is simply a python image with some packages installed.<br>

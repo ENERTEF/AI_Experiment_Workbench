@@ -81,7 +81,7 @@ spec:
             - "--auth-supernode-private-key"
             - "/auth/node_key"
         - name: superexec
-          image: soullessblob/flower-supernode:latest
+          image: registry.git.nrw/rwth-acs/public/ai-workbench/flower-client:latest
           {{- if eq (include "flower.caps" .) "true" }}
           volumeMounts:
             - name: caps-vol

@@ -217,7 +217,7 @@ jhub_central:
       capacity: 10Gi
       homeMountPath: /home/jovyan
     image:
-      name: soullessblob/tensorflow-notebook
-      tag: alpha
+      name: registry.git.nrw/rwth-acs/public/ai-workbench/notebook
+      tag: latest
       pullPolicy: Always
     defaultUrl: "/lab/tree/mlflow_tensorboard_examples.ipynb"

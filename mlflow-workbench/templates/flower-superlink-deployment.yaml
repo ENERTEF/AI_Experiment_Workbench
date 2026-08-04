@@ -52,7 +52,7 @@ spec:
             - containerPort: 9092
             - containerPort: 9093
         - name: superexec
-          image: soullessblob/flower-superlink:latest
+          image: registry.git.nrw/rwth-acs/public/ai-workbench/flower-server:latest
           env:
             - name: MLFLOW_TRACKING_URI
               value: "http://mlflow-svc:5000"
