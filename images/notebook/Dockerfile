@@ -3,9 +3,10 @@ USER root
 RUN apt-get update && apt-get install -y socat
 
 ADD requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install -r requirements.txt
 
-RUN jupyter server extension enable --user jupyter_server_proxy
+RUN jupyter server extension enable --sys-prefix jupyter_server_proxy
 
 #we basically need to rewrap flwr
 RUN mv /opt/conda/bin/flwr /opt/conda/bin/flwr.real
