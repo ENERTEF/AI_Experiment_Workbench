@@ -1,4 +1,4 @@
-FROM quay.io/jupyter/base-notebook:latest
+FROM quay.io/jupyter/base-notebook:python-3.13
 USER root
 RUN apt-get update && apt-get install -y socat
 
