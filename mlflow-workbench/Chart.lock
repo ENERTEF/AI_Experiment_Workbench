@@ -1,12 +1,12 @@
 dependencies:
 - name: minio
   repository: oci://registry-1.docker.io/cloudpirates
-  version: 0.5.7
+  version: 0.14.0
 - name: postgres
   repository: oci://registry-1.docker.io/cloudpirates
   version: 0.13.2
 - name: jupyterhub
   repository: https://jupyterhub.github.io/helm-chart
   version: 4.3.1
-digest: sha256:6d2f81ccddb26fc6d3a5c22dd6bab2154cda2adaf55aeffc193bb20a95970446
-generated: "2026-01-19T08:09:53.355446256Z"
+digest: sha256:efadcd5b7f4bcb95960c3b9c25f46e51377034aa5523fe9a9e412e8cb180fcc5
+generated: "2026-09-28T15:28:55.247985632+02:00"
