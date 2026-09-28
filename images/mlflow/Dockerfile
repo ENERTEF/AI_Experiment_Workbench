@@ -1,5 +1,5 @@
 FROM ghcr.io/mlflow/mlflow:latest
-RUN pip install mlflow[auth] psycopg2-binary
+RUN pip install mlflow[auth,db,databricks]
 ENV CORS_ALLOWED_ORIGINS="http://localhost"
 ENV ARTIFACT_DESTINATION="s3://mlflow"
 ENV POSTGRES_URI="localhost:5432"
