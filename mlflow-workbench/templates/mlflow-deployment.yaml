@@ -21,7 +21,7 @@ spec:
             secretName: mlflow-auth-config
       containers:
       - name: mlflow-container
-        image: ghcr.io/mlflow/mlflow:latest
+        image: registry.git.nrw/rwth-acs/public/ai-workbench/mlflow:latest
         volumeMounts:
           - name: auth-config
             mountPath: /app/config/auth.ini
@@ -53,16 +53,7 @@ spec:
               secretKeyRef:
                 name: credentials
                 key: postgres-uri
-        command: ["/bin/bash","-c"]
-        args:
-          - |
-            pip install mlflow[auth]
-            mlflow server \
-              --app-name basic-auth \
-              --host 0.0.0.0 \
-              --port 5000 \
-              --cors-allowed-origins "https://{{ .Values.expose.hostname }}" \
-              --serve-artifacts \
-              --enable-workspaces \
-              --backend-store-uri $POSTGRES_URI \
-              --artifacts-destination {{ printf "s3://%s" .Values.mlflow.minio_bucket | quote }}
+          - name:	CORS_ALLOWED_ORIGINS
+            value: {{ printf "https://%s" .Values.expose.hostname | quote }}
+          - name:	ARTIFACTS_DESTINATION
+            value: {{ printf "s3://%s" .Values.mlflow.minio_bucket | quote }}
