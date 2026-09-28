@@ -57,7 +57,7 @@ spec:
               python /scripts/register.py
       containers:
         - name: supernode
-          image: flwr/supernode:latest
+          image: flwr/supernode:1.32.1
           volumeMounts:
             {{- if eq (include "flower.use_default_ca" .) "false" }}
             - name: certs-vol

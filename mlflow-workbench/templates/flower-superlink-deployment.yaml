@@ -22,7 +22,7 @@ spec:
             secretName: {{ include "flower.tls_secretname" . }}
       containers:
         - name: superlink
-          image: flwr/superlink:latest
+          image: flwr/superlink:1.32.1
           env:
             - name: FLWR_LOG_LEVEL
               value: DEBUG
