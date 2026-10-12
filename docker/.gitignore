@@ -1,0 +1,4 @@
+.env
+data/
+certs/
+mlflow/auth.ini

@@ -1,0 +1,6 @@
+[mlflow]
+default_permission = NO_PERMISSIONS
+database_uri = postgresql://mlflow:mlflow@postgres:5432/mlflow
+admin_username = admin
+admin_password = admin420noscope
+authorization_function = mlflow.server.auth:authenticate_request_basic_auth

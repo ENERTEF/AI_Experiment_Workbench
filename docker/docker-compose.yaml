@@ -1,0 +1,318 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: postgres
+    networks: [workbench]
+    command: ["postgres", "-c", "huge_pages=off"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: cloudpirates/image-minio:RELEASE.2025-10-15T17-29-55Z-hardened
+    container_name: minio
+    networks: [workbench]
+    user: "1001:1001"
+    entrypoint: ["minio"]
+    command: ["server", "/mnt/data", "--console-address", ":9090"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+    volumes:
+      - ./data/minio:/mnt/data
+    # ports:
+    #   - "9090:9090"   # MinIO console
+    restart: unless-stopped
+
+  # Creates the bucket using boto3 from the MLflow image (no mc needed)
+  minio-init:
+    image: registry.git.nrw/rwth-acs/public/ai-workbench/mlflow:latest
+    container_name: minio-init
+    networks: [workbench]
+    depends_on:
+      - minio
+    entrypoint: ["python", "-c"]
+    command:
+      - |
+        import os, time, boto3
+        s3 = boto3.client("s3", endpoint_url="http://minio:9000",
+                          aws_access_key_id=os.environ["MINIO_USER"],
+                          aws_secret_access_key=os.environ["MINIO_PASSWORD"])
+        bucket = os.environ["MINIO_BUCKET"]
+        for i in range(30):
+            try:
+                if bucket not in [b["Name"] for b in s3.list_buckets()["Buckets"]]:
+                    s3.create_bucket(Bucket=bucket)
+                print(f"bucket '{bucket}' ready"); break
+            except Exception as e:
+                print(f"waiting for minio ({e.__class__.__name__})"); time.sleep(2)
+        else:
+            raise SystemExit("minio not reachable")
+    environment:
+      MINIO_USER: ${MINIO_USER}
+      MINIO_PASSWORD: ${MINIO_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+    restart: "no"
+
+  mlflow-svc:
+    image: registry.git.nrw/rwth-acs/public/ai-workbench/mlflow:latest
+    container_name: mlflow-svc
+    networks: [workbench]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      MLFLOW_FLASK_SERVER_SECRET_KEY: ${MLFLOW_FLASK_SECRET_KEY}
+      MLFLOW_AUTH_CONFIG_PATH: /app/config/auth.ini
+      MLFLOW_LOGGING_LEVEL: INFO
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      MLFLOW_SERVER_ALLOWED_HOSTS: localhost:5000,mlflow-svc:5000,${EXPOSE_HOSTNAME}
+      AWS_ACCESS_KEY_ID: ${MINIO_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_PASSWORD}
+      POSTGRES_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      CORS_ALLOWED_ORIGINS: https://${EXPOSE_HOSTNAME}
+      ARTIFACTS_DESTINATION: s3://${MINIO_BUCKET}
+    volumes:
+      - ./mlflow/auth.ini:/app/config/auth.ini:ro
+    # ports:
+    #   - "5000:5000"
+    restart: unless-stopped
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
+    container_name: keycloak
+    networks: [workbench]
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_JHUB_CLIENT_SECRET: ${KC_JHUB_CLIENT_SECRET}
+      KC_HOSTNAME: ${PUBLIC_URL}/auth
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_PROXY_HEADERS: xforwarded
+      JHUB_URL: ${PUBLIC_URL}
+    volumes:
+      - ./keycloak/import:/opt/keycloak/data/import:ro   # was: ConfigMap keycloak-realm-import
+    # ports:
+    #   - "8080:8080"
+    restart: unless-stopped
+  
+  jupyterhub:
+    build:
+      context: ./jupyterhub
+      dockerfile_inline: |
+        FROM quay.io/jupyterhub/jupyterhub:5.3.0
+        RUN pip install --no-cache-dir oauthenticator dockerspawner requests
+    image: workbench-jupyterhub
+    container_name: jupyterhub
+    networks: [workbench]
+    command: ["jupyterhub", "-f", "/srv/jupyterhub/jupyterhub_config.py"]
+    depends_on:
+      - keycloak
+      - mlflow-svc
+    environment:
+      JUPYTERHUB_CRYPT_KEY: ${JUPYTERHUB_CRYPT_KEY}     # required for enable_auth_state
+      KC_CLIENT_ID: jhub-mlfw
+      KC_CLIENT_SECRET: ${KC_JHUB_CLIENT_SECRET}
+      JHUB_URL: ${PUBLIC_URL}
+      KC_PUBLIC_REALM_URL: ${PUBLIC_URL}/auth/realms/mlflow-workbench
+      KC_INTERNAL_REALM_URL: http://keycloak:8080/auth/realms/mlflow-workbench
+      MLFLOW_ADMIN_USERNAME: ${MLFLOW_ADMIN_USERNAME}
+      MLFLOW_ADMIN_PASSWORD: ${MLFLOW_ADMIN_PASSWORD}
+      MLFLOW_EXTERNAL_URL: http://mlflow-svc:5000        # was localhost:5000 (wrong for Flower)
+      FLOWER_SIDECAR_ENABLED: "true"
+      FLOWER_SIDECAR_IMAGE: registry.git.nrw/rwth-acs/public/ai-workbench/flower-sidecar:latest
+      SUPERLINK_CONTROL: flower-superlink:9093
+      HOST_PROJECT_DIR: ${HOST_PROJECT_DIR}
+      NOTEBOOK_IMAGE: ${NOTEBOOK_IMAGE}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock      # lets the hub start notebook containers
+      - ./jupyterhub/jupyterhub_config.py:/srv/jupyterhub/jupyterhub_config.py:ro
+      - ./data/jupyterhub:/srv/jupyterhub/data
+      - ./data/jupyter-users:/srv/users
+      - ../mlflow-workbench/files:/srv/default-files:ro   # was: ConfigMap default-files
+    # ports:
+    #   - "8000:8000"
+    restart: unless-stopped
+  
+  # ================= Flower: federated env setup (was: Job fed-env-post-hook) =================
+  flower-fed-init:
+    image: registry.git.nrw/rwth-acs/public/ai-workbench/mlflow:latest   # already has requests
+    container_name: flower-fed-init
+    profiles: ["flower"]
+    networks: [workbench]
+    depends_on:
+      - mlflow-svc
+    environment:
+      FED_USER: ${MLFLOW_FED_USERNAME}
+      FED_PASS: ${MLFLOW_FED_PASSWORD}
+      FED_EXP_NAME: exp-federated     # was: federated.experiment_name
+      FED_WS_NAME: ws-federated       # was: federated.workspace_name
+      MLFLOW_ADMIN_USER: ${MLFLOW_ADMIN_USERNAME}
+      MLFLOW_ADMIN_PASS: ${MLFLOW_ADMIN_PASSWORD}
+    entrypoint: ["python", "-c"]
+    command:
+      - |
+        import requests, os, base64, time, sys
+        SVC = "http://mlflow-svc:5000"
+        for i in range(30):
+            try:
+                if requests.get(f"{SVC}/health", timeout=3).status_code == 200: break
+            except requests.exceptions.RequestException: pass
+            print(f"[{i+1}/30] waiting for MLflow...", flush=True); time.sleep(10)
+        else:
+            sys.exit("MLflow did not start")
+        user, pw = os.environ["FED_USER"], os.environ["FED_PASS"]
+        ws, exp = os.environ["FED_WS_NAME"], os.environ["FED_EXP_NAME"]
+        auth = base64.b64encode(f'{os.environ["MLFLOW_ADMIN_USER"]}:{os.environ["MLFLOW_ADMIN_PASS"]}'.encode()).decode()
+        h = {"Authorization": f"Basic {auth}", "Content-Type": "application/json"}
+        if requests.get(f"{SVC}/api/2.0/mlflow/users/get", params={"username": user}, headers=h, timeout=5).status_code == 200:
+            print(f"User {user} already exists. Skipping."); sys.exit(0)
+        def call(method, path, **kw):
+            r = requests.request(method, f"{SVC}{path}", headers={**h, **kw.pop("extra", {})}, timeout=5, **kw)
+            r.raise_for_status(); return r
+        call("POST", "/api/2.0/mlflow/users/create", json={"username": user, "password": pw})
+        call("PATCH", "/api/2.0/mlflow/users/update-admin", json={"username": user, "is_admin": False})
+        call("POST", "/api/3.0/mlflow/workspaces", json={"name": ws})
+        role_id = call("POST", "/api/3.0/mlflow/roles/create", json={"name": f"{ws}-reader", "workspace": ws}).json()["role"]["id"]
+        call("POST", "/api/3.0/mlflow/roles/permissions/add",
+             json={"permission": "USE", "resource_pattern": "*", "resource_type": "workspace", "role_id": role_id})
+        call("POST", "/api/3.0/mlflow/roles/assign", json={"role_id": role_id, "username": user})
+        exp_id = call("POST", "/api/2.0/mlflow/experiments/create", json={"name": exp},
+                      extra={"X-MLFLOW-WORKSPACE": ws}).json()["experiment_id"]
+        print(f"Provisioned. FEDERATED_EXPERIMENT_ID={exp_id}", flush=True)
+    restart: "no"
+
+  # ================= Flower: SuperLink (server) =================
+  flower-superlink:
+    image: flwr/superlink:1.32.1
+    container_name: flower-superlink
+    profiles: ["flower"]
+    networks: [workbench]
+    environment:
+      FLWR_LOG_LEVEL: DEBUG
+    command:
+      - --enable-supernode-auth
+      - --isolation
+      - process
+      - --serverappio-api-address
+      - 0.0.0.0:9091
+      - --fleet-api-address
+      - 0.0.0.0:9092
+      - --ssl-ca-certfile
+      - /app/certs/ca.crt
+      - --ssl-certfile
+      - /app/certs/tls.crt
+      - --ssl-keyfile
+      - /app/certs/tls.key
+    volumes:
+      - ./certs:/app/certs:ro
+    # ports:
+    #   - "9092:9092"   # Fleet API   (remote SuperNodes)
+    #   - "9093:9093"   # Control API (flwr CLI)
+    restart: unless-stopped
+
+  flower-superexec:
+    image: registry.git.nrw/rwth-acs/public/ai-workbench/flower-server:latest
+    container_name: flower-superexec
+    profiles: ["flower"]
+    networks: [workbench]
+    depends_on:
+      - flower-superlink
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow-svc:5000
+      MLFLOW_TRACKING_USERNAME: ${MLFLOW_ADMIN_USERNAME}
+      MLFLOW_TRACKING_PASSWORD: ${MLFLOW_ADMIN_PASSWORD}
+    command:
+      - --insecure
+      - --plugin-type
+      - serverapp
+      - --appio-api-address
+      - flower-superlink:9091
+    restart: unless-stopped
+
+  # ================= Flower: SuperNode (client) =================
+  flower-supernode-register:
+    image: python:3.11-slim
+    container_name: flower-supernode-register
+    profiles: ["flower"]
+    networks: [workbench]
+    depends_on:
+      - flower-superlink
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        pip install --no-cache-dir cryptography flwr==1.32.1
+        python /scripts/register.py
+    volumes:
+      - ./data/supernode-keys:/auth
+      - ./certs/ca.crt:/app/ca.crt:ro
+      - ./flower/register/register.py:/scripts/register.py:ro
+      - ./flower/register/config.toml:/root/.flwr/config.toml:ro
+    restart: "no"
+
+  flower-supernode:
+    image: flwr/supernode:1.32.1
+    container_name: flower-supernode
+    profiles: ["flower"]
+    networks: [workbench]
+    depends_on:
+      flower-supernode-register:
+        condition: service_completed_successfully
+    environment:
+      FLWR_LOG_LEVEL: DEBUG
+    command:
+      - --isolation
+      - process
+      - --clientappio-api-address
+      - 0.0.0.0:9094
+      - --superlink
+      - flower-superlink:9092
+      - --root-certificates
+      - /app/ca.crt
+      - --auth-supernode-private-key
+      - /auth/node_key
+    volumes:
+      - ./data/supernode-keys:/auth
+      - ./certs/ca.crt:/app/ca.crt:ro
+    restart: unless-stopped
+
+  flower-supernode-superexec:
+    image: registry.git.nrw/rwth-acs/public/ai-workbench/flower-client:latest
+    container_name: flower-supernode-superexec
+    profiles: ["flower"]
+    networks: [workbench]
+    depends_on:
+      - flower-supernode
+    environment:
+      FEDERATED_EXPERIMENT_ID: ${FEDERATED_EXPERIMENT_ID}
+      MLFLOW_WORKSPACE: ws-federated
+      MLFLOW_TRACKING_URI: http://mlflow-svc:5000
+      MLFLOW_TRACKING_USERNAME: ${MLFLOW_FED_USERNAME}
+      MLFLOW_TRACKING_PASSWORD: ${MLFLOW_FED_PASSWORD}
+    # Uncomment to use a capabilities file (was: flower.client.supernode.caps_file)
+    # volumes:
+    #   - ./flower/caps/capabilities.py:/etc/flower/capabilities.py:ro
+    command:
+      - --insecure
+      - --plugin-type
+      - clientapp
+      - --appio-api-address
+      - flower-supernode:9094
+    restart: unless-stopped
+
+networks:
+  workbench:
+    name: workbench

@@ -1,0 +1,58 @@
+{
+  "realm": "mlflow-workbench",
+  "enabled": true,
+  "roles": {
+    "client": {
+      "jhub-mlfw": [
+        { "name": "mlflow-admin" },
+        { "name": "mlflow-user" }
+      ]
+    }
+  },
+  "users": [
+    {
+      "username": "admin-user",
+      "emailVerified": true,
+      "email": "admin-user@mail.de",
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "admin123", "temporary": false }],
+      "clientRoles": { "jhub-mlfw": ["mlflow-admin"] }
+    },
+    {
+      "username": "standard-user",
+      "emailVerified": true,
+      "email": "standard-user@mail.de",
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "user123", "temporary": false }],
+      "clientRoles": { "jhub-mlfw": ["mlflow-user"] }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "jhub-mlfw",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "${KC_JHUB_CLIENT_SECRET}",
+      "redirectUris": [ "${JHUB_URL}/*" ],
+      "defaultClientScopes": [ "oidc", "roles", "profile", "email" ],
+      "protocolMappers": [
+        {
+          "name": "client roles mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "roles",
+            "usages.realm.role.mapping": "false",
+            "usages.client.role.mapping": "true",
+            "client.id": "jhub-mlfw"
+          }
+        }
+      ]
+    }
+  ]
+}
