@@ -1,6 +1,7 @@
 {
   "realm": "mlflow-workbench",
   "enabled": true,
+  "sslRequired": "none",
   "roles": {
     "client": {
       "jhub-mlfw": [

@@ -1,7 +1,8 @@
+name: workbench
+
 services:
   postgres:
     image: postgres:17
-    container_name: postgres
     networks: [workbench]
     command: ["postgres", "-c", "huge_pages=off"]
     environment:
@@ -10,6 +11,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -18,7 +20,6 @@ services:
 
   minio:
     image: cloudpirates/image-minio:RELEASE.2025-10-15T17-29-55Z-hardened
-    container_name: minio
     networks: [workbench]
     user: "1001:1001"
     entrypoint: ["minio"]
@@ -35,7 +36,6 @@ services:
   # Creates the bucket using boto3 from the MLflow image (no mc needed)
   minio-init:
     image: registry.git.nrw/rwth-acs/public/ai-workbench/mlflow:latest
-    container_name: minio-init
     networks: [workbench]
     depends_on:
       - minio
@@ -64,7 +64,6 @@ services:
 
   mlflow-svc:
     image: registry.git.nrw/rwth-acs/public/ai-workbench/mlflow:latest
-    container_name: mlflow-svc
     networks: [workbench]
     depends_on:
       postgres:
@@ -90,7 +89,6 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
-    container_name: keycloak
     networks: [workbench]
     command: ["start-dev", "--import-realm"]
     environment:
@@ -102,6 +100,10 @@ services:
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_PROXY_HEADERS: xforwarded
       JHUB_URL: ${PUBLIC_URL}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ./keycloak/import:/opt/keycloak/data/import:ro   # was: ConfigMap keycloak-realm-import
     # ports:
@@ -115,7 +117,6 @@ services:
         FROM quay.io/jupyterhub/jupyterhub:5.3.0
         RUN pip install --no-cache-dir oauthenticator dockerspawner requests
     image: workbench-jupyterhub
-    container_name: jupyterhub
     networks: [workbench]
     command: ["jupyterhub", "-f", "/srv/jupyterhub/jupyterhub_config.py"]
     depends_on:
@@ -145,11 +146,22 @@ services:
     # ports:
     #   - "8000:8000"
     restart: unless-stopped
+
+  proxy:
+    image: caddy:2
+    networks: [workbench]
+    volumes:
+      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "${PROXY_PORT:-8888}:80"
+    depends_on:
+      - jupyterhub
+      - keycloak
+    restart: unless-stopped
   
   # ================= Flower: federated env setup (was: Job fed-env-post-hook) =================
   flower-fed-init:
     image: registry.git.nrw/rwth-acs/public/ai-workbench/mlflow:latest   # already has requests
-    container_name: flower-fed-init
     profiles: ["flower"]
     networks: [workbench]
     depends_on:
@@ -197,7 +209,6 @@ services:
   # ================= Flower: SuperLink (server) =================
   flower-superlink:
     image: flwr/superlink:1.32.1
-    container_name: flower-superlink
     profiles: ["flower"]
     networks: [workbench]
     environment:
@@ -225,7 +236,6 @@ services:
 
   flower-superexec:
     image: registry.git.nrw/rwth-acs/public/ai-workbench/flower-server:latest
-    container_name: flower-superexec
     profiles: ["flower"]
     networks: [workbench]
     depends_on:
@@ -245,7 +255,6 @@ services:
   # ================= Flower: SuperNode (client) =================
   flower-supernode-register:
     image: python:3.11-slim
-    container_name: flower-supernode-register
     profiles: ["flower"]
     networks: [workbench]
     depends_on:
@@ -265,7 +274,6 @@ services:
 
   flower-supernode:
     image: flwr/supernode:1.32.1
-    container_name: flower-supernode
     profiles: ["flower"]
     networks: [workbench]
     depends_on:
@@ -291,7 +299,6 @@ services:
 
   flower-supernode-superexec:
     image: registry.git.nrw/rwth-acs/public/ai-workbench/flower-client:latest
-    container_name: flower-supernode-superexec
     profiles: ["flower"]
     networks: [workbench]
     depends_on:
