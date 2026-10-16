@@ -1,0 +1,6 @@
+[superlink]
+default = "remote"
+
+[superlink.remote]
+address = "flower-superlink:9093"
+root-certificates = "/app/ca.crt"
