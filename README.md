@@ -1,321 +1,339 @@
-<!-- TOC start (generated with https://github.com/derlin/bitdowntoc) -->
+# AI Experiment Workbench — Docker Compose
 
-- [EnerTEF JupyterHub ML Platform Documentation](#enertef-jupyterhub-ml-platform-documentation)
-   * [Overview](#overview)
-   * [Deployment ](#deployment)
-      + [Cluster bootstrapping](#cluster-bootstrapping)
-      + [Installation](#installation)
-   * [Values](#values)
-      + [Authentication](#authentication)
-      + [Ingress](#ingress)
-      + [Flower](#flower)
-      + [Jupyterhub](#jupyterhub)
-   * [Usage](#usage)
-      + [Architecture](#architecture)
-      + [User environment structure](#user-environment-structure)
-      + [Workflow](#workflow)
-   * [Summary](#summary)
-      + [Components](#components)
-         - [JupyterHub](#jupyterhub-1)
-         - [TensorBoard](#tensorboard)
-         - [MLflow](#mlflow)
-         - [Flower AI](#flower-ai)
-         - [Kubernetes](#kubernetes)
-   * [Development and Customization](#development-and-customization)
-      + [Adding User Scripts](#adding-user-scripts)
-      + [Environment Modifications](#environment-modifications)
-   * [Further Reading](#further-reading)
-   * [Questions](#questions)
+A Docker Compose port of the [ENERTEF AI Experiment Workbench](https://github.com/ENERTEF/AI_Experiment_Workbench)
+(originally a Helm chart for Kubernetes). It provides a multi-user ML platform:
 
-<!-- TOC end -->
+- **JupyterHub**: per-user JupyterLab containers with ML packages, MLflow and TensorBoard launchers
+- **Keycloak**: login and roles (`mlflow-user` / `mlflow-admin`)
+- **MLflow**: experiment tracking, with one isolated workspace per user
+- **Postgres + MinIO**: MLflow metadata and artifact storage
+- **Flower** (optional): federated learning (SuperLink, SuperNode, per-user CLI sidecar)
 
-<!-- TOC --><a name="enertef-jupyterhub-ml-platform-documentation"></a>
-# EnerTEF JupyterHub ML Platform Documentation
+Only one port is published: the `proxy` service. All services talk to each other by service name on the internal `workbench` network.
 
-<!-- TOC --><a name="overview"></a>
-## Overview
+---
 
-The EnerTEF JupyterHub ML Platform is a flexible ecosystem that provides users with utilities centered around Machine Learning tasks. 
-This ecosystem is configurable to include:
-- An isolated environment through a combination of containerization and **Jupyterhub**
-- Namespaced Dataset, training and evaluation tracking with **Mlflow**
-- Role based access control, using **Keycloak** for authentication and matching that in Mlflow with Jupterhub hooks.
-- **Tensorboard** for training visualization provided through Jupyterhub extensions. An extension is also provided for mlflow access.
-- **Flower AI** for distributed learning strategies, and a query system that ties it to Mlflow to realize federated learning.
+## Architecture
 
-<!-- TOC --><a name="deployment"></a>
-## Deployment 
+```
+ Browser ──► proxy (Caddy, :PROXY_PORT)
+               ├── /auth/*  ──► keycloak:8080
+               └── /*       ──► jupyterhub:8000
+                                   │  login via Keycloak (OIDC)
+                                   │  provisions MLflow user + workspace
+                                   └─► spawns jupyter-<user> containers (Docker socket)
+                                          │
+                                          ├─► mlflow-svc:5000 ──► postgres:5432 (metadata)
+                                          │                   └─► minio:9000    (artifacts)
+                                          └─► flower-sidecar-<user> ──► flower-superlink:9093
+                                                                         ▲
+                                              flower-supernode ──────────┘ :9092 (TLS)
+```
 
-<!-- TOC --><a name="cluster-bootstrapping"></a>
-### Cluster bootstrapping
-A detailed guide on cluster bootstrapping can be found under in the [cluster preparation docs](./docs/cluster-setup.md).
+| Service | Purpose | Internal address |
+|---|---|---|
+| `proxy` | Single entry point | published on `PROXY_PORT` |
+| `jupyterhub` | Hub + DockerSpawner | `jupyterhub:8000` |
+| `keycloak` | Identity provider (realm `mlflow-workbench`) | `keycloak:8080/auth` |
+| `mlflow-svc` | Tracking server with basic auth | `mlflow-svc:5000` |
+| `postgres` | DBs `mlflow` and `keycloak` | `postgres:5432` |
+| `minio` / `minio-init` | S3 artifact store / bucket creation | `minio:9000` |
+| `flower-*` | Federated learning (profile `flower`) | `flower-superlink:9091-9093` |
 
-**IMPORTANT**: To deploy the AI Workbench, a cluster is needed, equipped with ingress and cert controllers. 
-If you already have a properly configured cluster, jump to the next section.
+---
 
-<!-- TOC --><a name="installation"></a>
-### Installation
-1. Clone repository and navigate to directory:
+## Folder layout
+
+```
+docker/
+├── docker-compose.yml
+├── .env.example                 # copy to .env
+├── proxy/Caddyfile
+├── postgres/init/01-keycloak-db.sql
+├── mlflow/auth.ini.example      # copy to auth.ini
+├── keycloak/import/mlflow-workbench-realm.json
+├── jupyterhub/
+│   ├── jupyterhub_config.py
+│   └── jupyter_server_config.py
+├── flower/register/{register.py,config.toml}
+├── certs/                       # generated, not in git
+└── data/                        # runtime data, not in git
+```
+
+Default notebooks are mounted from `../mlflow-workbench/files`.
+
+---
+
+## Prerequisites
+
+- Linux host with **Docker Engine** and **Docker Compose v2** (`docker compose version`)
+- Your user in the `docker` group
+- Roughly 20 GB free disk space (the notebook image is large)
+- One free TCP port for the proxy (default `8888`)
+
+---
+
+## Installation
+
+All commands are run from the `docker/` folder.
+
+### 1. Clone
+
 ```bash
-git clone --recurse-submodules <repository-url>
-cd AI_Experiment_Workbench
+git clone <this-repo-url>
+cd <repo>/docker
 ```
 
-2. Install chart ( change values beforehand if needed ):
+### 2. Configure `.env`
+
 ```bash
-helm upgrade --install mlfw -n mlfw --create-namespace ./mlflow-workbench -f mlflow-workbench/values.yaml
+cp .env.example .env
 ```
 
-<!-- TOC --><a name="values"></a>
-## Values
-Postgres and Minio are there to be used by Mlflow. Only persistence and authentication should be configured in those charts.
+Generate the secrets:
 
-<!-- TOC --><a name="authentication"></a>
-### Authentication
-The chart relies on Keycloak to manage Mlflow workspaces belonging to different users. Admin users have access to all workspaces, standard users have access to only their workspace.<br>
-The mediator between Keycloak and Mlflow is Jupyterhub. It takes the user identity after successfulauthentication, and creates Mlflow credentials at the container creation stage.<br>
-
-If auth.external.enabled is false, a keycloak instance is deployed with a default realm and app client.<br>
-The Keycloak deployed by the app comes preconfigured with one admin and one standard user.<br>
-Use the Keycloak admin credentials to create other users:
-```
-kc_admin: "admin"
-kc_admin_pass: "admin"
+```bash
+openssl rand -hex 32     # JUPYTERHUB_CRYPT_KEY
+openssl rand -hex 16     # KC_JHUB_CLIENT_SECRET
+openssl rand -base64 32  # MLFLOW_FLASK_SECRET_KEY
+openssl rand -hex 24     # passwords (hex avoids URL-escaping problems)
 ```
 
-If auth.external.enabled is true, Jupyterhub will use the external Keycloak instance, that is assumed to be preconfigured with the values.<br>
-The group_key is the OIDC attribute that dictates the user role in the Workbench.<br>
-The allowed and admin groups are the exact mapping to standard and admin users respectively.<br>
-```
-external:
-  enabled: true
-  realm_url: ""
-  client_id: ""
-  client_secret: ""
-  groups_key: "oauth_user.roles"
-  allowed_groups:
-    - mlfw-user
-  admin_groups:
-    - mlfw-admin
+Set at least:
+
+| Variable | Example | Notes |
+|---|---|---|
+| `PROXY_PORT` | `8888` | must be free on the host |
+| `PUBLIC_URL` | `http://my-host.example.org:8888` | **no slash before the port** |
+| `JHUB_URL` | same as `PUBLIC_URL` | |
+| `EXPOSE_HOSTNAME` | `my-host.example.org` | hostname only |
+| `HOST_PROJECT_DIR` | `/home/me/<repo>/docker` | output of `pwd`; used for user bind mounts |
+| `POSTGRES_PASSWORD` | generated | set **before** first start |
+| `MINIO_PASSWORD` | generated | |
+| `MLFLOW_ADMIN_PASSWORD` | generated | must match `auth.ini` |
+| `MLFLOW_FED_PASSWORD` | generated | Flower only |
+| `KEYCLOAK_ADMIN_USERNAME` / `_PASSWORD` | `admin` / generated | Keycloak admin console |
+| `KC_JHUB_CLIENT_SECRET` | generated | |
+| `JUPYTERHUB_CRYPT_KEY` | generated (64 hex chars) | |
+| `COMPOSE_PROFILES` | `flower` or empty | empty = no Flower |
+
+Check that no placeholder is left:
+
+```bash
+grep changeme .env
 ```
 
-The client_id and client_secret are used for authentication between jupyterhub and Keycloak.<br>
-Obtained by configuring a client app in Keycloak.<br>
+Keep comments on their own lines in `.env`, never after a value.
 
-Skipping TLS verification is only useful in a setup with custom certification.<br> 
+### 3. Configure MLflow auth
 
-```
-insecure_skip_verify: true
-```
-
-
-<!-- TOC --><a name="ingress"></a>
-### Ingress
-Access to the platform is configurable through Ingress and Gatways API.<br>
-Reference your certificate issuer in the annotations to use TLS.<br>
-```
-annotations: {}
-```
-Alternatively provide own custom tls secret.<br>
-```
-tls:
-  secretname: ""
+```bash
+cp mlflow/auth.ini.example mlflow/auth.ini
 ```
 
-If using Gateways, a gateway is assumed to exist.<br>
-```
-gateway:
-  default_gateway:
-    name: eg
-    namespace: envoy-gateway-system
-    https_listener: https
-```
-No need for annotations in that case, as certification is defined at a Gateway level 
-with the gateways API.<br>
+Edit it so that it matches `.env`:
 
-<!-- TOC --><a name="flower"></a>
-### Flower
-Flower is an optional service here. Disable with corresponding flag if needed.<br>
-It is split into 3 different services: The jupyterhub user env sidecar, the supernode and the superlink.<br>
-If supernode or sidecar is enabled, and superlink is not enabled or superlink_cert doesnt exist, the supernode/sidecar has as fallback the usual default ca bundle.
-The superlink_addr is required if superlink is disabled but either sidecar or supernode is enabled.<br>
-```
-superlink_addr: ""
-superlink_cert: ""
+```ini
+[mlflow]
+default_permission = NO_PERMISSIONS
+database_uri = postgresql://<POSTGRES_USER>:<POSTGRES_PASSWORD>@postgres:5432/<POSTGRES_DB>
+admin_username = <MLFLOW_ADMIN_USERNAME>
+admin_password = <MLFLOW_ADMIN_PASSWORD>
+authorization_function = mlflow.server.auth:authenticate_request_basic_auth
 ```
 
-If using a certification operator, that doesnt write its ca.crt inside the secret, then set
-superlink.use_default_ca to true or use a custom tls secretname.<br>
-```
-use_default_ca: true
-```
-IP whitelisting is the primary mechanism to restrict access to the superlink control endpoint, as flower has not implemented auth for the control api.<br>
-```
-ip_whitelist: []
-```
-**IMPORTANT**: The gateways ip_whitelist usecase has not been tested yet.<br>
-the fed credentials:
-```
-fed_username: mlflowfed
-fed_password: mlflowfed123456
-```
-Are used by supernodes to access dataset sources stored in mlflow, and by superlink server
-to achieve centralized logging and federated learning.<br>
-It is advised to use the helm --set-file flag to provide the superlink_cert or the caps_file.<br>
-For supernode.caps_file, see usage below.<br>
+### 4. Data folders
 
-<!-- TOC --><a name="jupyterhub"></a>
-### Jupyterhub
-
-Custom user images can be configured:
-
+```bash
+mkdir -p data/postgres data/minio data/jupyterhub data/jupyter-users data/supernode-keys
+sudo chown -R 1001:1001 data/minio      # MinIO runs as UID 1001
 ```
-image:
-  name: registry.git.nrw/rwth-acs/public/ai-workbench/notebook:latest
+
+Config files must exist **before** the first start. If a bind-mounted file is missing, Docker creates an empty directory in its place.
+
+### 5. Flower TLS certificates (only if Flower is enabled)
+
+```bash
+mkdir -p certs && cd certs
+openssl req -x509 -newkey rsa:4096 -nodes -keyout ca.key -out ca.crt -days 3650 -subj "/CN=workbench-flower-ca"
+openssl req -newkey rsa:4096 -nodes -keyout tls.key -out tls.csr -subj "/CN=flower-superlink"
+echo "subjectAltName=DNS:flower-superlink,DNS:localhost" > san.ext
+openssl x509 -req -in tls.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out tls.crt -days 825 -extfile san.ext
+chmod 644 ca.crt tls.crt tls.key
+cd ..
 ```
-This is useful when using custom notebooks with specific dependencies.<br>
-The image of user environment is simply a python image with some packages installed.<br>
-To use custom notebooks , put them inside **mlflow-workbench/files**.<br>
 
-For more configurations options, pertaining to more complicated setups, refer to the [user environment gpu provisioning docs](./docs/user-environment-gpu-provision.md)
+### 6. Open the port
 
-<!-- TOC --><a name="usage"></a>
+```bash
+sudo ufw allow <PROXY_PORT>/tcp
+```
+
+Also allow it in any cloud or institutional firewall in front of the host.
+
+### 7. Start
+
+```bash
+docker compose pull
+docker pull registry.git.nrw/rwth-acs/public/ai-workbench/notebook:latest
+docker pull registry.git.nrw/rwth-acs/public/ai-workbench/flower-sidecar:latest   # if Flower
+docker compose up -d --build
+docker compose ps -a
+```
+
+All services should be `Up`. The one-shot services `minio-init`, `flower-fed-init` and `flower-supernode-register` should be `Exited (0)`. Keycloak needs about a minute on the first start.
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:<PROXY_PORT>/hub/login                    # 200
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:<PROXY_PORT>/auth/realms/mlflow-workbench # 200
+```
+
+### 8. Allow the Keycloak admin console over HTTP (one time)
+
+The workbench realm already allows HTTP (`sslRequired: none` in the realm file). The `master` realm, which serves the admin console, does not:
+
+```bash
+KCADM="docker compose exec -T keycloak /opt/keycloak/bin/kcadm.sh"
+$KCADM config credentials --server http://localhost:8080/auth --realm master \
+  --user "$(grep ^KEYCLOAK_ADMIN_USERNAME .env | cut -d= -f2)" \
+  --password "$(grep ^KEYCLOAK_ADMIN_PASSWORD .env | cut -d= -f2)"
+$KCADM update realms/master -s sslRequired=NONE
+```
+
+This persists because Keycloak stores its data in Postgres.
+
+### 9. Secure the demo accounts
+
+The realm ships with two demo users. Change their passwords or delete them in the admin console
+(`<PUBLIC_URL>/auth/admin/` → realm **mlflow-workbench** → Users).
+
+---
+
 ## Usage
 
-**IMPORTANT**: There is currently no version locking, as many of the used applications are actively under development, awaiting stabilization concerning some specific issues. Check the [known issues docs](./docs/known-issues.md) for more information
+| What | URL | Login |
+|---|---|---|
+| JupyterHub | `<PUBLIC_URL>` | Keycloak users of realm `mlflow-workbench` |
+| Keycloak admin | `<PUBLIC_URL>/auth/admin/` | `KEYCLOAK_ADMIN_*` from `.env` (realm `master`) |
+| MLflow UI | "MLflow UI" launcher inside JupyterLab | automatic, per user |
 
-<!-- TOC --><a name="architecture"></a>
-### Architecture
-The architecture is split: Within a single instance of this application, and across multiple instances of the application
-The following is within a single instance:
+Demo users: `standard-user` / `user123` (role `mlflow-user`) and `admin-user` / `admin123` (role `mlflow-admin`).
 
-![Architecture](docs/images/architecture.png)
+### Adding a user
 
-If flower is enabled, the flower architecture becomes relevant:
+In the admin console, realm **mlflow-workbench**:
 
-![Flower-architecture](docs/images/flower-architecture.svg)
-[source](https://flower.ai)
+1. **Users → Add user.** Set a username and turn on *Email verified*.
+2. **Credentials → Set password.** Turn *Temporary* off.
+3. **Role mapping → Assign role → Filter by clients.** Pick `jhub-mlfw mlflow-user` or `mlflow-admin`.
 
-The serverapp always ends up in the server, i.e, the superexec belonging to the superlink.<br>
-This allows to provision both the local admin mlflow credentials on the hub instance, and the remote , user specific mlflow credentials for the client instance.<br>
-The serverapp then uses that to log into both mlflow tracking servers, allowing for proper namespaced and selective model sharing:
+A user without one of these roles gets a 403 from JupyterHub.
 
-![Exterior-architecture](docs/images/extarch.png)
+### What happens at login
 
-Centralized and remote logging is only possible from the serverapp, because the client app can run in any arbitrary supernode ( other client ), making the superlink the center point of the setup.<br>
-<!-- TOC --><a name="user-environment-structure"></a>
-### User environment structure
+1. JupyterHub authenticates the user with Keycloak and reads the `roles` claim.
+2. It creates or updates the user's MLflow account with a random session password. Non-admins also get a workspace `ws-<user>`.
+3. It prepares `data/jupyter-users/<user>/`, copies in the default notebooks and sets ownership to `1000:100`.
+4. It starts `jupyter-<user>` with `MLFLOW_TRACKING_*` already set. If Flower is enabled, it also starts `flower-sidecar-<user>`.
 
-Each user gets a dedicated Kubernetes pod with a preconfigured environment that includes<br>
-1. Jupyter user environment
-2. ML python packages ( tensorflow, scikit )
-3. ML binaries/tools ( Flower )
-4. Extensions to access the tools ( Tensorboard, Mlflow )
+### Federated learning (Flower)
 
-With the use of kubernetes, user environment is persisted between sessions, even when the pod goes down.<br>
-Services can be further secured with NetworkPolicies, as they all rely on the cluster's networking.<br>
-Custom NetworkPolicies can be added in the jhub-central values block.<br>
+Enable it with `COMPOSE_PROFILES=flower` in `.env`. Then, in a JupyterLab terminal:
 
-<!-- TOC --><a name="workflow"></a>
-### Workflow
-1. Log into JupyterHub at http://\<hostname\>:8080 using pre-configured users if no external Keycloak is provided(admin-/standard-user)
-2. Access pre-installed libraries and scripts in the `/notebook-scripts/` directory
-
-The user can rely on the predefined example notebooks or also create any python or notebook file they want.<br>
-If flower is enabled, the a flwr cli sidecar container is deployed along side the main user container.<br>
-The flower commands are proxied through the binary z2jh_flwr
-```
-z2jh_flwr run --stream
-```
-The environment is preconfigured, but the cli proxy expects a rigid structure.<br>
-1. The user project has to be inside /home/jovyan/user.
-2. The command only runs from /home/jovyan/user, even if it is to only list or log runs.
-3. The project has to contain an "exports.py" file that contains a train and an evaluate function, a DEPENDENCIES array, and a CAPABILITIES string:string dictionary. ( look at the default exports.py in the provided default files for more info )
-
-CAPABILITIES is used to filter supernodes according to the user's needs.<br>
-This is the caps.py file that corresponds to flower.client.supernode.caps_file, it should look like this:
-```python
-import psutil
-
-def CAPABILITIES():
-  return {
-    "cpu":psutil.cpu_percent(),
-    "ram":psutil.virtual_memory().available/(1024**3),
-    "dataset":["wine-quality"] #should be replaced with runtime mlflow fed_exp dataset check
-  }
+```bash
+mkdir -p ~/user && cp ~/exports.py ~/user/
+cd ~/user && z2jh_flwr run --stream
 ```
 
-The user can then define a dict in their exports.py:
-```python
-CAPABILITIES = {
-    "dataset":"has$wine-quality",
-    "cpu":"lt$20", #in percent
-    "ram":"gt$3.5" #in Gb for example
-}
+The project must live in `~/user` and contain an `exports.py` with `train`, `evaluate`, `DEPENDENCIES` and `CAPABILITIES`. If `CAPABILITIES` asks for something no SuperNode offers, no node is scheduled. Use `{}` to accept any node.
 
+`flower-fed-init` prints the federated experiment ID on first run. It must match `FEDERATED_EXPERIMENT_ID` in `.env`.
+
+---
+
+## Operations
+
+```bash
+docker compose ps -a                         # status
+docker compose logs -f <service>             # logs
+docker compose up -d --force-recreate <svc>  # apply .env / config changes
+docker compose down                          # stop (data is kept)
 ```
 
-And the server will query all registered nodes, which will return their capabilities dynamically.<br> 
-The query system supports entirely arbitrary keys and values, so make sure whatever the user is asking for, exists, otherwise no supernode will be scheduled, and the project run aborted.<br>
-**IMPORTANT**: The constraints work on an all or nothing basis, the only accepted nodes are the ones that fulfill all requirements (for now).<br> 
-**IMPORTANT**: The only supported types in the supernode capabilities are primitives, or lists thereof.<br>
-The only supported operators are lt,gt,eq ( for comparables only ) and has ( for lists only ).<br> 
+Notebook and sidecar containers are created by the hub, not by Compose. Stop them with:
 
+```bash
+docker rm -f $(docker ps -aq --filter "name=jupyter-" --filter "name=flower-sidecar-")
+```
 
-<!-- TOC --><a name="summary"></a>
-## Summary
+### Update
 
-<!-- TOC --><a name="components"></a>
-### Components
+```bash
+git pull
+docker compose pull
+docker compose up -d --build
+```
 
-<!-- TOC --><a name="jupyterhub-1"></a>
-#### JupyterHub
-Multi-user platform that provisions isolated Jupyter notebook environments. Each user receives a dedicated container with pre-configured tools and libraries.
+### Backup
 
-<!-- TOC --><a name="tensorboard"></a>
-#### TensorBoard
-Visualization tool for machine learning experiments. Integrated directly into notebook environment for real-time monitoring of training metrics, loss curves, and model performance.
+All state lives in `data/` and in Postgres:
 
-<!-- TOC --><a name="mlflow"></a>
-#### MLflow
-Experiment tracking and model management platform. Provides:
-- Parameter and metric logging
-- Model versioning and storage
-- Experiment comparison
-- User-based isolation (group isolation not implemented)
+```bash
+docker compose exec -T postgres pg_dumpall -U "$(grep ^POSTGRES_USER .env | cut -d= -f2)" > backup-$(date +%F).sql
+sudo tar czf data-$(date +%F).tgz data/
+```
 
-<!-- TOC --><a name="flower-ai"></a>
-#### Flower AI
-Federated learning/running of ML tasks. Flower breaks down every ML process into a client and server application. These are then deployed and ran selectively in arbitrary nodes. A clientapp usually contains the actual learning process. A serverapp aggregates from multiple of the same clientapp type. This level of customization allows us to weave MLFlow around flower.
+### Reset Keycloak to the realm file
 
-<!-- TOC --><a name="kubernetes"></a>
-#### Kubernetes
-Container orchestration platform managing all services, networking, and resource allocation. Uses k3d for local development environments.
+The realm file is imported only once, when the realm doesn't exist yet. To re-import it:
 
-<!-- TOC --><a name="development-and-customization"></a>
-## Development and Customization
+```bash
+docker compose exec postgres psql -U "$(grep ^POSTGRES_USER .env | cut -d= -f2)" -d postgres \
+  -c "DROP DATABASE keycloak;" -c "CREATE DATABASE keycloak;"
+docker compose up -d --force-recreate keycloak
+```
 
-<!-- TOC --><a name="adding-user-scripts"></a>
-### Adding User Scripts
-- Place scripts that should be pre-loaded in `files/`
-- Update `requirements.txt` for new dependencies
-- Scripts are automatically copied to user directories
+Then repeat step 8.
 
-<!-- TOC --><a name="environment-modifications"></a>
-### Environment Modifications
-- Modify Dockerfiles in `images` for base images
-- Update Helm values in `values.yaml`
-- Add services via Kubernetes manifests
+---
 
-<!-- TOC --><a name="further-reading"></a>
-## Further Reading
+## Troubleshooting
 
-- [JupyterHub Documentation](https://jupyterhub.readthedocs.io/)
-- [MLflow Documentation](https://mlflow.org/docs/latest/index.html)
-- [TensorBoard Documentation](https://www.tensorflow.org/tensorboard)
-- [MinIO Documentation](https://docs.min.io/community/minio-object-store/index.html)
-- [Kubernetes Documentation](https://kubernetes.io/docs/)
-<!-- TOC --><a name="questions"></a>
-## Questions
+| Symptom | Cause / fix |
+|---|---|
+| `container name ... already in use` | Another stack on the host uses that name. This compose file sets no fixed names; containers are prefixed `workbench-`. |
+| Port conflict on start | Choose another `PROXY_PORT` (check with `sudo ss -ltnp`). |
+| 404 on "Sign in with keycloak" | Bad `PUBLIC_URL`, e.g. `http://host/:8888`. It must be `http://host:8888`. Recreate `keycloak` and `jupyterhub` after fixing. |
+| 502 on the Keycloak page | Keycloak is still starting (about 1 min) or failing: `docker compose logs keycloak`. |
+| "HTTPS required" | Run step 8 (admin console), or check `sslRequired` on the workbench realm. |
+| "Invalid redirect uri" | The client's redirect URI must be `<PUBLIC_URL>/*`: Clients → `jhub-mlfw` → Valid redirect URIs. |
+| JupyterHub exits: "Encryption keys must be 32 bytes" | `JUPYTERHUB_CRYPT_KEY` must be 64 hex characters. |
+| MLflow `KeyError: 'mlflow'` | `mlflow/auth.ini` is missing or empty, or Docker created it as a directory. |
+| MLflow 401 in browser | Use a private window. The credentials come from `auth.ini`. |
+| Notebook spawn timeout | The first pull of the notebook image is slow. Pre-pull it, then click "Start My Server" again. |
+| MinIO permission denied | `sudo chown -R 1001:1001 data/minio` |
 
-If you have any questions, feel free to reach out to lara.roth@eonerc.rwth-aachen.de
+---
+
+## Moving to HTTPS
+
+1. Get a dedicated hostname, e.g. `workbench.example.org`, pointing to the host.
+2. Put a TLS-terminating reverse proxy in front, such as Nginx Proxy Manager on the `workbench` network: `/` → `jupyterhub:8000`, `/auth` → `keycloak:8080`, with websockets enabled.
+3. Remove the `proxy` service and close `PROXY_PORT`.
+4. Set `PUBLIC_URL=https://workbench.example.org` (and `JHUB_URL`, `EXPOSE_HOSTNAME`), then recreate `keycloak`, `jupyterhub` and `mlflow-svc`.
+5. In Keycloak, update the redirect URI and set `sslRequired` back to `external` on both realms.
+
+---
+
+## Security notes
+
+- The hub mounts `/var/run/docker.sock`. Hub admins effectively control the host, so only give admin roles to trusted users.
+- Plain HTTP sends passwords unencrypted. Use it for testing only.
+- Never commit `.env`, `mlflow/auth.ini`, `certs/` or `data/` (see `.gitignore`).
+
+---
+
+## Credits
+
+Based on [ENERTEF/AI_Experiment_Workbench](https://github.com/ENERTEF/AI_Experiment_Workbench) (Apache-2.0).
+Container images by RWTH ACS (`registry.git.nrw/rwth-acs/public/ai-workbench/*`), Flower, Keycloak, MLflow and CloudPirates.
