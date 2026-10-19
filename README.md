@@ -9,8 +9,6 @@ A Docker Compose port of the [ENERTEF AI Experiment Workbench](https://github.co
 - **Postgres + MinIO**: MLflow metadata and artifact storage
 - **Flower** (optional): federated learning (SuperLink, SuperNode, per-user CLI sidecar)
 
-Only one port is published: the `proxy` service. All services talk to each other by service name on the internal `workbench` network.
-
 ---
 
 ## Architecture
@@ -32,7 +30,6 @@ Only one port is published: the `proxy` service. All services talk to each other
 
 | Service | Purpose | Internal address |
 |---|---|---|
-| `proxy` | Single entry point | published on `PROXY_PORT` |
 | `jupyterhub` | Hub + DockerSpawner | `jupyterhub:8000` |
 | `keycloak` | Identity provider (realm `mlflow-workbench`) | `keycloak:8080/auth` |
 | `mlflow-svc` | Tracking server with basic auth | `mlflow-svc:5000` |
@@ -48,7 +45,6 @@ Only one port is published: the `proxy` service. All services talk to each other
 docker/
 ├── docker-compose.yml
 ├── .env.example                 # copy to .env
-├── proxy/Caddyfile
 ├── postgres/init/01-keycloak-db.sql
 ├── mlflow/auth.ini.example      # copy to auth.ini
 ├── keycloak/import/mlflow-workbench-realm.json
@@ -103,8 +99,7 @@ Set at least:
 
 | Variable | Example | Notes |
 |---|---|---|
-| `PROXY_PORT` | `8888` | must be free on the host |
-| `PUBLIC_URL` | `http://my-host.example.org:8888` | **no slash before the port** |
+| `PUBLIC_URL` | `http://my-host.example.org`
 | `JHUB_URL` | same as `PUBLIC_URL` | |
 | `EXPOSE_HOSTNAME` | `my-host.example.org` | hostname only |
 | `HOST_PROJECT_DIR` | `/home/me/<repo>/docker` | output of `pwd`; used for user bind mounts |
@@ -188,21 +183,7 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:<PROXY_PORT>/hub/login
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:<PROXY_PORT>/auth/realms/mlflow-workbench # 200
 ```
 
-### 8. Allow the Keycloak admin console over HTTP (one time)
-
-The workbench realm already allows HTTP (`sslRequired: none` in the realm file). The `master` realm, which serves the admin console, does not:
-
-```bash
-KCADM="docker compose exec -T keycloak /opt/keycloak/bin/kcadm.sh"
-$KCADM config credentials --server http://localhost:8080/auth --realm master \
-  --user "$(grep ^KEYCLOAK_ADMIN_USERNAME .env | cut -d= -f2)" \
-  --password "$(grep ^KEYCLOAK_ADMIN_PASSWORD .env | cut -d= -f2)"
-$KCADM update realms/master -s sslRequired=NONE
-```
-
-This persists because Keycloak stores its data in Postgres.
-
-### 9. Secure the demo accounts
+### 8. Secure the demo accounts
 
 The realm ships with two demo users. Change their passwords or delete them in the admin console
 (`<PUBLIC_URL>/auth/admin/` → realm **mlflow-workbench** → Users).
@@ -312,16 +293,6 @@ Then repeat step 8.
 | MLflow 401 in browser | Use a private window. The credentials come from `auth.ini`. |
 | Notebook spawn timeout | The first pull of the notebook image is slow. Pre-pull it, then click "Start My Server" again. |
 | MinIO permission denied | `sudo chown -R 1001:1001 data/minio` |
-
----
-
-## Moving to HTTPS
-
-1. Get a dedicated hostname, e.g. `workbench.example.org`, pointing to the host.
-2. Put a TLS-terminating reverse proxy in front, such as Nginx Proxy Manager on the `workbench` network: `/` → `jupyterhub:8000`, `/auth` → `keycloak:8080`, with websockets enabled.
-3. Remove the `proxy` service and close `PROXY_PORT`.
-4. Set `PUBLIC_URL=https://workbench.example.org` (and `JHUB_URL`, `EXPOSE_HOSTNAME`), then recreate `keycloak`, `jupyterhub` and `mlflow-svc`.
-5. In Keycloak, update the redirect URI and set `sslRequired` back to `external` on both realms.
 
 ---
 
