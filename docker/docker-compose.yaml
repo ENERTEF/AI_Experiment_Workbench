@@ -146,18 +146,6 @@ services:
     # ports:
     #   - "8000:8000"
     restart: unless-stopped
-
-  proxy:
-    image: caddy:2
-    networks: [workbench]
-    volumes:
-      - ./proxy/Caddyfile:/etc/caddy/Caddyfile:ro
-    ports:
-      - "${PROXY_PORT:-8888}:80"
-    depends_on:
-      - jupyterhub
-      - keycloak
-    restart: unless-stopped
   
   # ================= Flower: federated env setup (was: Job fed-env-post-hook) =================
   flower-fed-init:
