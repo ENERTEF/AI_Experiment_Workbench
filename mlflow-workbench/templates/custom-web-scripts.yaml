@@ -1,0 +1,95 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-web-scripts
+  namespace: {{ .Release.Namespace }}
+data:
+  custom.css: |
+{{- if not ( empty .Values.branding.custom_css ) }}
+{{-  .Values.branding.custom_css | nindent 4 }}
+{{- else }}
+    :root {
+        --ui-orange: #ff985b;
+        --ui-white: #ffffff;
+        --ui-purple: #cc3ec6;
+
+        --ui-gradient: linear-gradient(
+            90deg,
+            var(--ui-purple) 0%,
+            var(--ui-orange) 100%
+        );
+    }
+
+    /* Main application */
+    body,
+    #main,
+    .jp-LabShell,
+    .jp-MainAreaWidget,
+    .jp-Activity,
+    .lm-BoxPanel,
+    .lm-DockPanel,
+    .lm-SplitPanel,
+    .lm-TabPanel,
+    .lm-StackedPanel {
+        background: var(--ui-gradient) !important;
+    }
+
+    /* Toolbars */
+    .jp-Toolbar,
+    .jp-NotebookPanel-toolbar {
+        background: var(--ui-gradient) !important;
+    }
+
+
+    /* Command palette */
+    .lm-CommandPalette {
+        background: var(--ui-gradient) !important;
+    }
+
+    /* splitters and separators in navigation */
+    .lm-SplitPanel-handle {
+        background: var(--ui-gradient) !important;
+    }
+
+    /* buttons above navigation */
+    .jp-ToolbarButton{
+        background: var(--ui-white) !important;
+    }
+
+    /* right */
+    .jp-mod-right {
+        background: var(--ui-orange) !important;
+    }
+
+    /* left */
+    .jp-mod-left {
+        background: var(--ui-purple) !important;
+    }
+    
+    /* bottom */
+    #jp-bottom-panel,
+    #jp-main-statusbar {
+        background: var(--ui-gradient) !important;
+    }
+    
+    /* top */
+    #jp-menu-panel{
+        background: var(--ui-white) !important;
+    }
+
+    #jp-top-bar{
+        background: var(--ui-gradient) !important;
+    }
+
+    /* custom inner logo */
+    #jp-MainLogo > svg {
+        display: none;
+    }
+
+    #jp-MainLogo {
+        background-image: url("data:image/svg+xml,%3Csvg%20fill%3D%22none%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%22188%20199%20538.17%20557.25%22%3E%3Crect%20x%3D%22188%22%20y%3D%22199%22%20width%3D%22538.17%22%20height%3D%22557.25%22%20fill%3D%22white%22%2F%3E%3Cpath%20fill-rule%3D%22evenodd%22%20clip-rule%3D%22evenodd%22%20d%3D%22M518.572%20326.354C550.33%20322.565%20574.949%20295.603%20574.949%20262.904C574.949%20227.611%20546.266%20199%20510.885%20199C475.503%20199%20446.82%20227.611%20446.82%20262.904C446.82%20295.603%20471.44%20322.565%20503.197%20326.354V442.192C483.137%20444.052%20465.174%20453.12%20451.935%20466.773L406.084%20421.037C412.36%20412.553%20416.069%20402.065%20416.069%20390.713C416.069%20362.479%20393.123%20339.59%20364.818%20339.59C336.512%20339.59%20313.566%20362.479%20313.566%20390.713C313.566%20418.948%20336.512%20441.837%20364.818%20441.837C376.196%20441.837%20386.708%20438.138%20395.212%20431.881L442.271%20478.823C436.031%20488.312%20431.715%20499.172%20429.877%20510.854H315.672C311.874%20479.176%20284.845%20454.618%20252.064%20454.618C216.683%20454.618%20188%20483.229%20188%20518.522C188%20553.816%20216.683%20582.427%20252.064%20582.427C284.845%20582.427%20311.874%20557.869%20315.672%20526.191H428.921C429.631%20549.252%20439.91%20569.911%20455.932%20584.349L377.651%20662.433C369.56%20657.103%20359.865%20654%20349.442%20654C321.137%20654%20298.191%20676.888%20298.191%20705.123C298.191%20733.358%20321.137%20756.247%20349.442%20756.247C377.748%20756.247%20400.694%20733.358%20400.694%20705.123C400.694%20692.824%20396.34%20681.539%20389.085%20672.718L468.393%20593.608C480.785%20601.112%20495.329%20605.432%20510.885%20605.432C529.45%20605.432%20546.574%20599.278%20560.319%20588.904L635.889%20664.285C628.25%20673.213%20623.638%20684.797%20623.638%20697.455C623.638%20725.689%20646.584%20748.578%20674.89%20748.578C703.195%20748.578%20726.141%20725.689%20726.141%20697.455C726.141%20669.22%20703.195%20646.331%20674.89%20646.331C664.832%20646.331%20655.451%20649.221%20647.536%20654.213L571.671%20578.538C584.855%20564.023%20592.887%20544.764%20592.887%20523.635C592.887%20481.045%20560.256%20446.058%20518.572%20442.192V326.354ZM483.211%20532.201L515.643%20481.276C517.295%20478.681%20521.34%20480.399%20520.584%20483.374L512.569%20514.922H534.217C536.306%20514.922%20537.577%20517.202%20536.464%20518.955L504.11%20569.924C502.458%20572.525%20498.405%20570.803%20499.168%20567.824L507.258%20536.237H485.456C483.365%20536.237%20482.095%20533.953%20483.211%20532.201Z%22%20fill%3D%22url%28%23paint0_linear_90_1829%29%22%3E%3C%2Fpath%3E%20%3Cdefs%3E%20%3ClinearGradient%20id%3D%22paint0_linear_90_1829%22%20x1%3D%22188%22%20y1%3D%22477.623%22%20x2%3D%22658.02%22%20y2%3D%22477.865%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%20%3Cstop%20stop-color%3D%22%23C83BD0%22%3E%3C%2Fstop%3E%20%3Cstop%20offset%3D%220.5%22%20stop-color%3D%22%23EE597E%22%3E%3C%2Fstop%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23FF985B%22%3E%3C%2Fstop%3E%20%3C%2FlinearGradient%3E%20%3C%2Fdefs%3E%20%3C%2Fsvg%3E");
+        background-repeat: no-repeat;
+        background-position: center;
+        background-size: contain;
+    }
+{{- end }}

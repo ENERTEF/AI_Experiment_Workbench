@@ -12,6 +12,7 @@ data:
 
     # Read the config we injected from the Hub
     proxy_json = os.environ.get('PROXY_CONFIG_JSON')
+    c.LabApp.custom_css = True
     if proxy_json:
         c.ServerProxy.servers = json.loads(proxy_json)
   auth_config.py: |
@@ -50,6 +51,10 @@ data:
     import base64
     import secrets
     import json 
+    import urllib.request
+
+    urllib.request.urlretrieve('https://raw.githubusercontent.com/SystemsPurge/remote-dl-various/refs/heads/main/enertef/logo_cropped.svg', 'logo-nb.svg')
+    c.JupyterHub.logo_file = '/srv/jupyterhub/logo-nb.svg'
 
     MLFLOW_ADMIN = "{{ .Values.mlflow.mlflow_admin_username }}"
     MLFLOW_PASS = "{{ .Values.mlflow.mlflow_admin_password }}"
@@ -68,8 +73,8 @@ data:
         password = secrets.token_hex(16)
 
         #increase timeout (x2)
-        spawner.http_timeout = 60 
-        spawner.start_timeout = 60
+        spawner.http_timeout = 300
+        spawner.start_timeout = 300
         
         
         spawner.volumes["00-config"] = {
@@ -77,6 +82,13 @@ data:
             "configMap":{
                 "name": "jhub-extra-config"
             },
+        }
+
+        spawner.volumes["00-custom-web-scripts"] = {
+            "name":"custom-web-scripts",
+            "configMap":{
+                "name":"custom-web-scripts"
+            }
         }
         
         spawner.volumes["00-files"] = {
@@ -91,6 +103,12 @@ data:
             "mountPath":"/etc/jupyter/jupyter_server_config.py",
             "subPath":"jupyter_server_config.py",
             "readOnly":True
+        }
+
+        spawner.volume_mounts["01-custom-css"] = {
+            "name":"custom-web-scripts",
+            "mountPath":"/home/jovyan/.jupyter/custom/custom.css",
+            "subPath":"custom.css"
         }
         
         spawner.init_containers = [{

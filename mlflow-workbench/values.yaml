@@ -161,6 +161,13 @@ flower:
     use_default_ca: false
     enabled: false
     ip_whitelist: []
+
+
+#Hub and user environment branding
+#For documentation on the custom css: https://jupyterlab.readthedocs.io/en/4.4.x/user/custom_css.html
+branding:
+  custom_css: ""
+
 #A copy of the values of the Z2JH subchart
 #The primary function of the hub in this app is to handle redirects from the IDP
 #To create an mlflow account depending on group, create the notebook and activate 
